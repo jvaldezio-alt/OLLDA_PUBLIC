@@ -1,0 +1,1939 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OLLDA – Oracle Listener Log Discovery and Analyzer</title>
+  <script>
+    // Apply saved theme before first paint to avoid flash
+    (function() {
+      const t = localStorage.getItem('ollda-theme');
+      if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+    })();
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --primary: #2563EB; --primary-hover: #1D4ED8; --primary-light: #EFF6FF;
+      --success: #16A34A; --danger: #DC2626;
+      --bg: #F1F5F9; --surface: #FFFFFF; --border: #E2E8F0;
+      --text: #1E293B; --muted: #64748B;
+      --shadow: 0 1px 3px rgba(0,0,0,.08); --shadow-md: 0 4px 16px rgba(0,0,0,.10);
+      --radius: 10px;
+      --hero-bg: linear-gradient(150deg, #F8FAFC 0%, #F1F5F9 100%);
+      --hero-title-color: #1E293B; --hero-sub-color: #64748B;
+      --hero-tag-bg: #EFF6FF; --hero-tag-border: rgba(37,99,235,.2); --hero-tag-color: #2563EB;
+      --upload-card-bg: #FFFFFF; --upload-card-border: #CBD5E1;
+      --upload-title-color: #1E293B; --upload-browse-color: #64748B; --upload-hint-color: #94A3B8;
+      --hero-feat-color: #94A3B8;
+      --notice-text: #64748B; --notice-strong: #374151;
+      --notice-privacy-bg: #FFFFFF; --notice-privacy-border: #E2E8F0;
+      --file-list-bg: #F8FAFC; --file-list-border: #E2E8F0;
+      --file-item-sep: #E2E8F0; --file-item-name: #1E293B; --file-item-size: #94A3B8;
+      --thead-bg: #1E293B; --thead-bg-hover: #334155;
+      --warn-surface: #1E293B;
+      --row-alt: #F8FAFC; --row-hover: #EFF6FF;
+    }
+    :root[data-theme="dark"] {
+      --primary-light: rgba(37,99,235,.18);
+      --bg: #0F172A; --surface: #1E293B; --border: #334155;
+      --text: #F1F5F9; --muted: #94A3B8;
+      --shadow: 0 1px 3px rgba(0,0,0,.35); --shadow-md: 0 4px 16px rgba(0,0,0,.55);
+      --hero-bg: linear-gradient(150deg, #060E1F 0%, #0D1F45 45%, #080F22 100%);
+      --hero-title-color: #F1F5F9; --hero-sub-color: rgba(255,255,255,.52);
+      --hero-tag-bg: rgba(199,70,52,.14); --hero-tag-border: rgba(199,70,52,.32); --hero-tag-color: #FCA5A5;
+      --upload-card-bg: rgba(255,255,255,.045); --upload-card-border: rgba(255,255,255,.18);
+      --upload-title-color: rgba(255,255,255,.9); --upload-browse-color: rgba(255,255,255,.5); --upload-hint-color: rgba(255,255,255,.3);
+      --hero-feat-color: rgba(255,255,255,.45);
+      --notice-text: rgba(255,255,255,.5); --notice-strong: rgba(255,255,255,.75);
+      --notice-privacy-bg: rgba(255,255,255,.045); --notice-privacy-border: rgba(255,255,255,.10);
+      --file-list-bg: rgba(255,255,255,.04); --file-list-border: rgba(255,255,255,.10);
+      --file-item-sep: rgba(255,255,255,.07); --file-item-name: rgba(255,255,255,.75); --file-item-size: rgba(255,255,255,.3);
+      --thead-bg: #0F172A; --thead-bg-hover: #1E293B;
+      --warn-surface: #0F172A;
+      --row-alt: rgba(255,255,255,.04); --row-hover: rgba(37,99,235,.12);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+           background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    header { background: #04080F; color: rgba(255,255,255,.85); padding: 14px 24px;
+             display: flex; justify-content: center;
+             border-bottom: 1px solid rgba(255,255,255,.07); }
+    .header-inner { display: flex; align-items: center; justify-content: space-between;
+                    width: 100%; max-width: 660px; }
+    header h1 { font-size: 1.1rem; font-weight: 700; letter-spacing: .01em; }
+
+    .section { display: none; }
+    .section.active { display: block; }
+
+    .btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 20px;
+           border-radius: 6px; font-size: .88rem; font-weight: 500; cursor: pointer;
+           border: none; transition: background .15s, transform .1s; }
+    .btn:active { transform: scale(.97); }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover { background: var(--primary-hover); }
+    .btn-outline { background: transparent; color: var(--primary); border: 1.5px solid var(--primary); }
+    .btn-outline:hover { background: var(--primary-light); }
+    .btn-success { background: #15803D; color: #fff; }
+    .btn-success:hover { background: #166534; }
+
+    /* ── Hero / Upload ─────────────────────────────────── */
+    .hero { min-height: calc(100vh - 54px - 64px);
+            background: var(--hero-bg);
+            display: flex; align-items: flex-start; justify-content: center;
+            position: relative; overflow: hidden; padding: 28px 24px 16px; }
+    .hero::before { content: ''; position: absolute; inset: 0;
+                    background-image: radial-gradient(rgba(96,165,250,.1) 1px, transparent 1px);
+                    background-size: 32px 32px; pointer-events: none; }
+    .hero-glow-r { position: absolute; top: -180px; right: -180px; width: 560px; height: 560px;
+                   background: radial-gradient(circle, rgba(199,70,52,.14) 0%, transparent 65%);
+                   pointer-events: none; }
+    .hero-glow-l { position: absolute; bottom: -160px; left: -160px; width: 520px; height: 520px;
+                   background: radial-gradient(circle, rgba(37,99,235,.1) 0%, transparent 65%);
+                   pointer-events: none; }
+    .hero-inner  { position: relative; z-index: 1; text-align: center;
+                   max-width: 660px; width: 100%; }
+    .hero-db-icon { color: #3B82F6; margin-bottom: 12px;
+                    filter: drop-shadow(0 0 18px rgba(59,130,246,.45)); }
+    .hero-tag { display: inline-flex; align-items: center; gap: 7px;
+                background: var(--hero-tag-bg); border: 1px solid var(--hero-tag-border);
+                border-radius: 99px; padding: 5px 15px; margin-bottom: 14px;
+                font-size: .73rem; color: var(--hero-tag-color); letter-spacing: .08em;
+                text-transform: uppercase; font-weight: 600; }
+    .hero-tag-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--hero-tag-color); flex-shrink: 0; }
+    .hero-title { font-size: 2.2rem; font-weight: 900; color: var(--hero-title-color); line-height: 1.1;
+                  margin-bottom: 12px; }
+    .hero-title em { font-style: normal; color: var(--primary); }
+    .hero-sub { color: var(--hero-sub-color); font-size: .92rem; line-height: 1.6;
+                margin-bottom: 18px; }
+    .hero-sub code { background: var(--primary-light); border-radius: 4px;
+                     padding: 1px 7px; color: var(--primary); font-size: .9em; }
+    .upload-card { background: var(--upload-card-bg); backdrop-filter: blur(28px);
+                   -webkit-backdrop-filter: blur(28px);
+                   border: 1.5px dashed var(--upload-card-border); border-radius: 18px;
+                   padding: 28px 32px; cursor: pointer; transition: all .3s;
+                   margin-bottom: 18px; }
+    .upload-card:hover, .upload-card.drag {
+                   border-color: var(--primary); background: var(--primary-light);
+                   box-shadow: var(--shadow-md); }
+    .upload-card .up-icon { color: var(--primary); margin-bottom: 10px;
+                            filter: drop-shadow(0 0 10px rgba(59,130,246,.4)); }
+    .upload-card .up-title { font-size: 1.02rem; font-weight: 600; color: var(--upload-title-color);
+                              margin-bottom: 5px; }
+    .upload-card .up-browse { color: var(--upload-browse-color); font-size: .88rem; }
+    .upload-card .up-link   { color: var(--primary); text-decoration: underline; cursor: pointer; }
+    .upload-card .up-hint   { font-size: .76rem; color: var(--upload-hint-color);
+                              margin-top: 10px; letter-spacing: .02em; }
+    .hero-feats { display: flex; justify-content: center; gap: 22px; flex-wrap: wrap; }
+    .hero-feat  { display: flex; align-items: center; gap: 7px;
+                  color: var(--hero-feat-color); font-size: .80rem; }
+    .hero-feat-dot { width: 6px; height: 6px; border-radius: 50%;
+                     background: #4ADE80; flex-shrink: 0; }
+
+    /* ── Footer ─────────────────────────────────────────── */
+    footer { background: #04080F; color: rgba(255,255,255,.42); height: 64px;
+             padding: 0 36px; display: flex; align-items: center;
+             justify-content: space-between; flex-wrap: wrap; gap: 12px;
+             font-size: .78rem; border-top: 1px solid rgba(255,255,255,.06); flex-shrink: 0; }
+    footer strong { color: rgba(255,255,255,.75); }
+    .foot-center { display: flex; align-items: center; gap: 7px; }
+    .foot-right  { display: flex; align-items: center; gap: 12px; }
+
+    /* Progress */
+    .progress-wrap { display: flex; align-items: center; justify-content: center;
+                     min-height: calc(100vh - 54px - 64px); padding: 40px; }
+    .progress-card { background: var(--surface); border-radius: var(--radius);
+                     padding: 40px 48px; max-width: 500px; width: 100%;
+                     box-shadow: var(--shadow-md); text-align: center; }
+    .progress-card h2 { margin-bottom: 8px; }
+    .progress-card .filename { color: var(--muted); font-size: .85rem; margin-bottom: 28px; word-break: break-all; }
+    .bar-track { background: var(--border); border-radius: 99px; height: 10px; overflow: hidden; }
+    .bar-fill  { background: var(--primary); height: 100%; width: 0; border-radius: 99px; transition: width .4s ease; }
+    .bar-fill.done { background: var(--success); }
+    .progress-card .pct   { font-size: 2rem; font-weight: 700; color: var(--primary); margin: 16px 0 4px; }
+    .progress-card .stats { font-size: .85rem; color: var(--muted); }
+
+    /* Analysis */
+    .analysis-wrap { max-width: 1400px; margin: 0 auto; padding: 24px; }
+    .top-bar { display: flex; align-items: center; justify-content: space-between;
+               margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
+    .top-bar h2 { font-size: 1.15rem; font-weight: 600; }
+    .period-badge { display: inline-block; background: var(--primary-light); color: var(--primary);
+                    border-radius: 99px; padding: 4px 14px; font-size: .8rem; font-weight: 500; }
+
+    /* 20/80 layout */
+    .analysis-body { display: grid; grid-template-columns: 20% 1fr; gap: 20px; align-items: start; }
+    @media (max-width: 860px) { .analysis-body { grid-template-columns: 1fr; } }
+    .sidebar { position: sticky; top: 12px; }
+    .sidebar-label { font-size: .72rem; font-weight: 700; text-transform: uppercase;
+                     letter-spacing: .07em; color: var(--muted); margin-bottom: 12px; }
+    .sidebar .cards { display: flex; flex-direction: column; gap: 10px; margin-bottom: 0; }
+    .sidebar .card { padding: 14px 16px; }
+    .sidebar .card .value { font-size: 1.25rem; }
+    .sidebar .card .label { font-size: .68rem; }
+
+    /* Cards */
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
+             gap: 14px; margin-bottom: 24px; }
+    .card { background: var(--surface); border-radius: var(--radius); padding: 18px 20px; box-shadow: var(--shadow); }
+    .card .label { font-size: .72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
+    .card .value { font-size: 1.55rem; font-weight: 700; }
+    .card .value.success { color: var(--success); }
+    .card .value.danger  { color: var(--danger); }
+
+    /* Group-by panel */
+    .panel { background: var(--surface); border-radius: var(--radius);
+             padding: 20px 24px; margin-bottom: 20px; box-shadow: var(--shadow); }
+    .panel-title { font-size: .75rem; font-weight: 600; text-transform: uppercase;
+                   letter-spacing: .07em; color: var(--muted); margin-bottom: 12px; }
+    .quick-views { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+    .quick-btn { padding: 5px 14px; border-radius: 99px; font-size: .82rem;
+                 border: 1.5px solid var(--border); cursor: pointer; background: var(--surface);
+                 color: var(--text); transition: all .15s; }
+    .quick-btn:hover { border-color: var(--primary); color: var(--primary); }
+    .quick-btn.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+    .divider { height: 1px; background: var(--border); margin: 14px 0; }
+    .dim-pills { display: flex; flex-wrap: wrap; gap: 8px; }
+    .dim-pill { display: flex; align-items: center; gap: 5px; padding: 6px 14px; border-radius: 99px;
+                font-size: .85rem; border: 1.5px solid var(--border); cursor: pointer;
+                user-select: none; background: var(--surface); color: var(--text); transition: all .15s; }
+    .dim-pill:hover { border-color: var(--primary); color: var(--primary); }
+    .dim-pill.on { background: var(--primary); border-color: var(--primary); color: #fff; font-weight: 500; }
+
+    /* View toggle + controls */
+    .table-controls { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+    .view-toggle { display: flex; border: 1.5px solid var(--border); border-radius: 6px; overflow: hidden; flex-shrink: 0; }
+    .toggle-btn { padding: 7px 18px; border: none; background: transparent; cursor: pointer;
+                  font-size: .85rem; color: var(--muted); transition: all .15s; }
+    .toggle-btn.active { background: var(--primary); color: #fff; font-weight: 500; }
+    .search-input { flex: 1; min-width: 180px; max-width: 300px; padding: 8px 14px;
+                    border: 1.5px solid var(--border); border-radius: 6px; font-size: .88rem; outline: none; }
+    .search-input:focus { border-color: var(--primary); }
+    .row-count { font-size: .83rem; color: var(--muted); margin-left: auto; }
+
+    /* Table */
+    .table-container { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+    .table-scroll { overflow-x: auto; max-height: calc(100vh - 390px); overflow-y: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: .875rem; }
+    thead th { background: var(--thead-bg); color: #fff; padding: 11px 14px; text-align: left;
+               font-weight: 500; white-space: nowrap; position: sticky; top: 0; z-index: 2;
+               cursor: pointer; user-select: none; }
+    thead th:hover { background: var(--thead-bg-hover); }
+    thead th.sort-asc::after  { content: ' \2191'; }
+    thead th.sort-desc::after { content: ' \2193'; }
+    thead th.num { text-align: right; }
+    tbody tr:nth-child(even) { background: var(--row-alt); }
+    tbody tr:hover { background: var(--row-hover); }
+    tbody td { padding: 9px 14px; border-bottom: 1px solid var(--border); white-space: nowrap;
+               max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
+    tbody td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: .75rem; font-weight: 500; }
+    .badge-ok  { background: #DCFCE7; color: #15803D; }
+    .badge-err { background: #FEE2E2; color: #DC2626; }
+
+    /* Charts */
+    .charts-grid { display: grid; grid-template-columns: 3fr 2fr; gap: 16px; }
+    @media (max-width: 900px) { .charts-grid { grid-template-columns: 1fr; } }
+    .chart-card { background: var(--surface); border-radius: var(--radius); padding: 20px 24px; box-shadow: var(--shadow); }
+    .chart-card-title { font-size: .75rem; font-weight: 600; text-transform: uppercase;
+                        letter-spacing: .07em; color: var(--muted); margin-bottom: 16px; }
+    .chart-full { background: var(--surface); border-radius: var(--radius); padding: 20px 24px;
+                  box-shadow: var(--shadow); margin-bottom: 16px; }
+    .chart-wrap { position: relative; }
+
+    /* ── Connection Map ────────────────────────────────── */
+    .map-section { margin-top: 32px; }
+    .map-header { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
+    .map-header h3 { font-size: 1rem; font-weight: 700; white-space: nowrap; }
+    .map-header p { font-size: .82rem; color: var(--muted); }
+    .ip-map-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 12px; }
+
+    .ip-card { border-radius: var(--radius); padding: 20px 14px 16px; text-align: center;
+               cursor: pointer; transition: transform .15s, box-shadow .15s; user-select: none; }
+    .ip-card:hover { transform: translateY(-4px); box-shadow: 0 8px 24px rgba(0,0,0,.18); }
+    .ip-card .ip-icon { margin-bottom: 10px; }
+    .ip-card .ip-pct  { font-size: 1.55rem; font-weight: 800; line-height: 1; margin-bottom: 6px; }
+    .ip-card .ip-addr { font-size: .8rem; font-weight: 600; word-break: break-all; margin-bottom: 3px; }
+    .ip-card .ip-host { font-size: .72rem; opacity: .75; white-space: nowrap;
+                        overflow: hidden; text-overflow: ellipsis; margin-bottom: 6px; }
+    .ip-card .ip-count { font-size: .72rem; opacity: .7; }
+    /* Tier colours */
+    .t4 { background: #1E3A8A; color: #fff; }
+    .t3 { background: #2563EB; color: #fff; }
+    .t2 { background: #BFDBFE; color: #1E3A8A; }
+    .t1 { background: #EFF6FF; color: #3B82F6; border: 1.5px solid #BFDBFE; }
+
+    /* ── Modal ─────────────────────────────────────────── */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(15,23,42,.55);
+                     display: none; align-items: center; justify-content: center;
+                     z-index: 1000; padding: 16px; backdrop-filter: blur(4px); }
+    .modal-overlay.open { display: flex; }
+    .modal-box { background: var(--surface); border-radius: 14px; box-shadow: 0 20px 60px rgba(0,0,0,.25);
+                 max-width: 920px; width: 100%; max-height: 90vh; overflow-y: auto; }
+    .modal-header { display: flex; justify-content: space-between; align-items: flex-start;
+                    padding: 20px 24px 16px; border-bottom: 1px solid var(--border);
+                    position: sticky; top: 0; background: var(--surface); z-index: 2; }
+    .modal-title { font-size: 1.25rem; font-weight: 700; }
+    .modal-subtitle { font-size: .85rem; color: var(--muted); margin-top: 3px; }
+    .modal-close { background: var(--bg); border: none; border-radius: 50%; width: 32px; height: 32px;
+                   cursor: pointer; font-size: 1rem; display: flex; align-items: center;
+                   justify-content: center; color: var(--muted); flex-shrink: 0; transition: background .15s; }
+    .modal-close:hover { background: var(--border); color: var(--text); }
+    .modal-kpis { display: flex; flex-wrap: wrap; gap: 0; border-bottom: 1px solid var(--border); }
+    .modal-kpi { flex: 1; min-width: 100px; padding: 14px 20px; text-align: center;
+                 border-right: 1px solid var(--border); }
+    .modal-kpi:last-child { border-right: none; }
+    .modal-kpi .kv { font-size: 1.3rem; font-weight: 700; }
+    .modal-kpi .kl { font-size: .7rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-top: 2px; }
+    .modal-body { padding: 20px 24px; display: flex; flex-direction: column; gap: 20px; }
+    .modal-row { display: grid; grid-template-columns: 3fr 2fr; gap: 16px; }
+    @media (max-width: 680px) { .modal-row { grid-template-columns: 1fr; } }
+    .modal-section-title { font-size: .72rem; font-weight: 700; text-transform: uppercase;
+                           letter-spacing: .07em; color: var(--muted); margin-bottom: 10px; }
+    .modal-section { background: var(--bg); border: 1px solid var(--border);
+                     border-radius: 10px; padding: 14px 16px; }
+    .mini-list { display: flex; flex-direction: column; gap: 0; }
+    .mini-item { display: flex; justify-content: space-between; align-items: center;
+                 font-size: .85rem; padding: 7px 0; border-bottom: 1px solid var(--border); }
+    .mini-item:last-child { border-bottom: none; }
+    .mini-item-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
+    .mini-item-count { font-weight: 600; color: var(--primary); flex-shrink: 0; margin-left: 8px; }
+    .mini-prog-bar { height: 4px; background: var(--primary-light); border-radius: 99px; margin-top: 4px; }
+    .mini-prog-fill { height: 100%; background: var(--primary); border-radius: 99px; }
+
+    /* ── Fail-code rows ─────────────────────────────────────────────────────── */
+    .fail-item { border-bottom: 1px solid var(--border); }
+    .fail-item:last-child { border-bottom: none; }
+    .fail-row { display: flex; justify-content: space-between; align-items: center;
+                padding: 8px 0 6px; cursor: pointer; gap: 8px; }
+    .fail-row:hover .fail-code { text-decoration: underline; }
+    .fail-code { font-size: .87rem; font-weight: 600; color: var(--danger); }
+    .fail-count { font-weight: 700; color: var(--danger); flex-shrink: 0; font-size: .87rem; }
+    .fail-chevron { color: var(--muted); transition: transform .2s; font-size: .75rem; flex-shrink: 0; }
+    .fail-item.open .fail-chevron { transform: rotate(90deg); }
+    .fail-detail { display: none; padding: 0 0 10px 2px; }
+    .fail-item.open .fail-detail { display: block; }
+    .fail-desc { font-size: .82rem; color: var(--muted); line-height: 1.5; }
+    .fail-cause { font-size: .78rem; color: #64748B; margin-top: 4px;
+                  background: #F8FAFC; border-left: 3px solid var(--danger);
+                  padding: 6px 10px; border-radius: 0 4px 4px 0; }
+
+    /* ── IP Tree ────────────────────────────────────────────────────────────── */
+    .tree-row { cursor: pointer; transition: background .1s; }
+    .tree-row:hover { background: var(--row-hover); }
+    .tree-row.tree-has-children td:first-child { color: var(--primary); }
+    .tree-row.tree-leaf-row td:first-child { color: var(--text); cursor: default; }
+    .tree-prefix { font-family: 'Courier New', monospace; font-size: .88rem; }
+    .tree-muted  { color: var(--muted); font-size: .75rem; margin-left: 6px; }
+
+    /* Loading */
+    .table-loading { text-align: center; padding: 40px; color: var(--muted); font-size: .9rem; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner { display: inline-block; width: 20px; height: 20px; border: 3px solid var(--border);
+               border-top-color: var(--primary); border-radius: 50%; animation: spin .7s linear infinite;
+               vertical-align: middle; margin-right: 8px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="header-inner">
+    <h1><span style="margin-right:8px;">⛏️</span>OLLDA &ndash; Oracle Listener Log Discovery and Analyzer</h1>
+    <button id="theme-btn" onclick="toggleTheme()" title="Toggle dark/light mode"
+      style="background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);
+             border-radius:99px;padding:5px 12px;cursor:pointer;
+             display:flex;align-items:center;gap:6px;flex-shrink:0;
+             color:rgba(255,255,255,.75);font-size:.78rem;font-weight:500;
+             transition:background .15s;">
+      <span id="theme-icon">🌙</span>
+      <span id="theme-label">Dark</span>
+    </button>
+  </div>
+</header>
+
+<!-- Upload -->
+<div id="sec-upload" class="section active">
+  <div class="hero">
+    <div class="hero-glow-r"></div>
+    <div class="hero-glow-l"></div>
+    <div class="hero-inner">
+
+      <!-- DB Icon -->
+      <div class="hero-db-icon">
+        <svg width="52" height="52" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+          <ellipse cx="12" cy="5" rx="9" ry="3"/>
+          <path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/>
+          <path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/>
+        </svg>
+      </div>
+
+      <!-- Tag -->
+      <div class="hero-tag">
+        <span class="hero-tag-dot"></span>
+        Oracle Listener Log Intelligence
+      </div>
+
+      <!-- Title -->
+      <h2 class="hero-title">
+        Discover <em>Every Connection</em><br>to Your Oracle Database
+      </h2>
+
+      <!-- Subtitle -->
+      <p class="hero-sub">
+        Upload your <code>listener.log</code> and instantly map all inbound connections —
+        by IP, program, host, user &amp; service — with interactive charts and exportable reports.
+      </p>
+
+      <!-- Upload card -->
+      <div class="upload-card" id="dropzone"
+           onclick="document.getElementById('file-in').click()">
+        <div class="up-icon">
+          <svg width="40" height="40" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+        </div>
+        <div class="up-title">Drop listener log files here</div>
+        <div class="up-browse">or <span class="up-link">browse for files</span> &nbsp;·&nbsp; multiple files supported (RAC)</div>
+        <div class="up-hint">Supports .log, .txt, .gz, .tar.gz &nbsp;·&nbsp; Up to 500 MB (compressed) &nbsp;·&nbsp; SCAN + node listeners</div>
+        <input type="file" id="file-in" hidden accept=".log,.txt,.gz,.tar.gz,application/gzip,application/x-tar" multiple>
+      </div>
+
+      <!-- Staged file list + start button -->
+      <div id="staged-area" style="display:none;margin-bottom:18px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <span style="font-size:.78rem;font-weight:700;color:rgba(255,255,255,.5);
+                       text-transform:uppercase;letter-spacing:.07em;">
+            Files staged for analysis
+          </span>
+          <button onclick="event.stopPropagation();document.getElementById('file-in').click()"
+                  style="font-size:.75rem;color:#60A5FA;background:none;border:none;
+                         cursor:pointer;text-decoration:underline;padding:0;">
+            + Add more files
+          </button>
+        </div>
+        <div id="file-list"
+             style="background:var(--file-list-bg);border:1px solid var(--file-list-border);
+                    border-radius:10px;padding:8px 12px;margin-bottom:12px;"></div>
+        <button id="btn-start" onclick="startUpload()"
+                style="width:100%;padding:12px;border-radius:10px;font-size:.95rem;font-weight:700;
+                       background:linear-gradient(135deg,#2563EB,#1D4ED8);color:#fff;border:none;
+                       cursor:pointer;transition:opacity .15s;letter-spacing:.02em;"
+                onmouseover="this.style.opacity='.88'" onmouseout="this.style.opacity='1'">
+          ▶&nbsp; Start Analysis
+        </button>
+      </div>
+
+      <!-- Personal project disclaimer -->
+      <div style="display:flex;align-items:flex-start;gap:10px;background:rgba(251,191,36,.055);
+                  border:1px solid rgba(251,191,36,.22);border-radius:10px;padding:12px 16px;
+                  margin-bottom:14px;text-align:left;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#FBBF24" stroke-width="2"
+             style="flex-shrink:0;margin-top:1px;">
+          <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        <span style="font-size:.78rem;color:var(--notice-text);line-height:1.55;">
+          <strong style="color:var(--notice-strong);">Personal project:</strong>
+          This tool was built as a personal initiative and is not affiliated with, endorsed by,
+          or related to any employer, client, or organisation (including Oracle Corp). Use at your own discretion.
+        </span>
+      </div>
+
+      <!-- Privacy disclosure -->
+      <div style="display:flex;align-items:flex-start;gap:10px;background:var(--notice-privacy-bg);
+                  border:1px solid var(--notice-privacy-border);border-radius:10px;padding:12px 16px;
+                  margin-bottom:24px;text-align:left;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4ADE80" stroke-width="2"
+             style="flex-shrink:0;margin-top:1px;">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+        <span style="font-size:.78rem;color:var(--notice-text);line-height:1.55;">
+          <strong style="color:var(--notice-strong);">Privacy notice:</strong>
+          The uploaded files are processed entirely in memory during your session and are never written to permanent storage.
+          All data is discarded automatically when the session ends.
+        </span>
+      </div>
+
+      <!-- Feature bullets -->
+      <div class="hero-feats">
+        <div class="hero-feat"><span class="hero-feat-dot"></span>IP &amp; Host Mapping</div>
+        <div class="hero-feat"><span class="hero-feat-dot"></span>Program &amp; User Breakdown</div>
+        <div class="hero-feat"><span class="hero-feat-dot"></span>Hourly / Daily Activity</div>
+        <div class="hero-feat"><span class="hero-feat-dot"></span>Excel Export</div>
+        <div class="hero-feat"><span class="hero-feat-dot"></span>500 MB files supported</div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Progress -->
+<div id="sec-progress" class="section">
+  <div class="progress-wrap">
+    <div class="progress-card">
+      <h2 id="prog-title">Parsing File</h2>
+      <p class="filename" id="prog-filename"></p>
+      <div class="bar-track"><div class="bar-fill" id="bar-fill"></div></div>
+      <div class="pct" id="prog-pct">0%</div>
+      <div class="stats" id="prog-stats">Uploading...</div>
+      <div id="prog-quote" style="margin-top:22px;min-height:64px;padding:14px 18px;
+           border-top:1px solid var(--border);text-align:left;opacity:0;
+           transition:opacity .6s ease;">
+        <div id="prog-quote-text"
+             style="font-style:italic;font-size:.88rem;color:var(--muted);line-height:1.55;"></div>
+        <div id="prog-quote-author"
+             style="text-align:right;font-size:.78rem;color:var(--primary);
+                    margin-top:6px;font-weight:500;"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Analysis -->
+<div id="sec-analysis" class="section">
+  <div class="analysis-wrap">
+
+    <div class="top-bar">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+        <h2 id="file-label">listener.log</h2>
+        <span class="period-badge" id="period-badge"></span>
+      </div>
+      <button class="btn btn-outline" onclick="newFile()">New File</button>
+    </div>
+
+    <div class="analysis-body">
+
+    <!-- LEFT: Overview sidebar -->
+    <div class="sidebar">
+      <div class="sidebar-label">Overview</div>
+      <div class="cards">
+        <div class="card"><div class="label">Total Connections</div><div class="value" id="st-total">—</div></div>
+        <div class="card"><div class="label">Successful</div><div class="value success" id="st-success">—</div></div>
+        <div class="card"><div class="label">Failures</div><div class="value danger" id="st-fail">—</div></div>
+        <div class="card"><div class="label">Unique IPs</div><div class="value" id="st-ips">—</div></div>
+        <div class="card"><div class="label">Programs</div><div class="value" id="st-prog">—</div></div>
+        <div class="card"><div class="label">Services</div><div class="value" id="st-svc">—</div></div>
+        <div class="card"><div class="label">Client Hosts</div><div class="value" id="st-host">—</div></div>
+        <div class="card"><div class="label">OS Users</div><div class="value" id="st-user">—</div></div>
+      </div>
+    </div>
+
+    <!-- RIGHT: Main content -->
+    <div class="main-col">
+
+    <!-- Group-by panel -->
+    <div class="panel">
+      <div class="panel-title">Quick Views</div>
+      <div class="quick-views">
+        <button class="quick-btn" data-dims="client_ip">By IP</button>
+        <button class="quick-btn" data-dims="program">By Program</button>
+        <button class="quick-btn" data-dims="client_host">By Host</button>
+        <button class="quick-btn" data-dims="os_user">By User</button>
+        <button class="quick-btn" data-dims="service_name">By Service</button>
+        <button class="quick-btn" data-dims="client_ip,program">IP + Program</button>
+        <button class="quick-btn" data-dims="client_ip,program,client_host">IP + Program + Host</button>
+        <button class="quick-btn" data-dims="date">By Date</button>
+        <button class="quick-btn" data-dims="date,hour">Date + Hour</button>
+      </div>
+      <div class="divider"></div>
+      <div class="panel-title">Custom Group By</div>
+      <div class="dim-pills">
+        {% for key, label in dims %}
+        <div class="dim-pill" data-dim="{{ key }}" onclick="toggleDim('{{ key }}')">
+          <span>&#10003;</span> {{ label }}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- Table / Chart controls -->
+    <div class="table-controls">
+      <div class="view-toggle">
+        <button id="btn-table"  class="toggle-btn active" onclick="setView('table')">Table</button>
+        <button id="btn-chart"  class="toggle-btn"        onclick="setView('chart')">Charts</button>
+        <button id="btn-iptree" class="toggle-btn"        onclick="setView('iptree')">🌐 IP Tree</button>
+      </div>
+      <input class="search-input" id="search-box" type="text"
+             placeholder="Search in results..." oninput="applyFilter()">
+      <button class="btn btn-success" onclick="exportExcel()">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+        </svg>
+        Export to Excel
+      </button>
+      <span class="row-count" id="row-count"></span>
+    </div>
+
+    <!-- Table view -->
+    <div id="view-table">
+      <div class="table-container">
+        <div class="table-scroll">
+          <div id="table-area">
+            <div class="table-loading">Select a grouping above to load data.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Chart view -->
+    <div id="view-chart" style="display:none;">
+      <div class="chart-full">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+          <div class="chart-card-title" id="chart-bar-title" style="margin-bottom:0;">Connections by Group</div>
+          <button id="btn-fail-only" onclick="toggleFailOnly()"
+            style="display:flex;align-items:center;gap:6px;padding:5px 14px;border-radius:99px;
+                   font-size:.8rem;font-weight:600;border:1.5px solid var(--danger);
+                   background:transparent;color:var(--danger);cursor:pointer;transition:all .15s;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+            Failures only
+          </button>
+        </div>
+        <div class="chart-wrap" id="bar-wrap" style="height:420px;">
+          <canvas id="chart-bar"></canvas>
+        </div>
+      </div>
+
+      <!-- Failure codes breakdown (visible only in failures-only mode) -->
+      <div id="fail-codes-panel" style="display:none;margin-bottom:16px;">
+        <div class="chart-full">
+          <div class="chart-card-title" style="color:var(--danger);margin-bottom:14px;">
+            Failed Connections — Error Code Breakdown
+          </div>
+          <div id="fail-codes-list" class="mini-list"></div>
+        </div>
+      </div>
+      <div class="charts-grid">
+        <div class="chart-card">
+          <div class="chart-card-title">Distribution — Top 10</div>
+          <div class="chart-wrap" style="height:340px;"><canvas id="chart-donut"></canvas></div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-card-title">Success vs Failures</div>
+          <div class="chart-wrap" style="height:340px;"><canvas id="chart-pie"></canvas></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- IP Tree view -->
+    <div id="view-iptree" style="display:none;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
+        <div style="font-weight:600;font-size:.95rem;color:var(--text);">IP Tree</div>
+        <button id="btn-tree-fail-only" onclick="toggleTreeFailOnly()"
+          style="display:flex;align-items:center;gap:6px;padding:5px 14px;border-radius:99px;
+                 font-size:.8rem;font-weight:600;border:1.5px solid var(--danger);
+                 background:transparent;color:var(--danger);cursor:pointer;transition:all .15s;">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+          Failures only
+        </button>
+      </div>
+      <div id="iptree-area">
+        <div class="table-loading">Select "By IP" grouping to use the IP Tree view.</div>
+      </div>
+      <div id="iptree-fail-panel" style="display:none;margin-top:16px;">
+        <div class="chart-full">
+          <div class="chart-card-title" style="color:var(--danger);margin-bottom:14px;">
+            Failed Connections — Error Code Breakdown
+          </div>
+          <div id="iptree-fail-list" class="mini-list"></div>
+        </div>
+      </div>
+      <div id="iptree-chart-wrap" style="margin-top:16px;"></div>
+    </div>
+
+    <!-- ── Connection Map ──────────────────────────────── -->
+    <div class="map-section">
+      <div class="map-header">
+        <h3>Connection Map</h3>
+        <p>Each client IP as % of total connections — click for full details</p>
+        <input id="map-search" list="ip-datalist" type="text"
+               placeholder="All IPs — type or select..."
+               oninput="filterMap()"
+               autocomplete="off"
+               class="search-input"
+               style="margin-left:auto;max-width:300px;">
+        <datalist id="ip-datalist"></datalist>
+        <span id="map-count" style="font-size:.82rem;color:var(--muted);white-space:nowrap;"></span>
+      </div>
+      <div class="ip-map-grid" id="ip-map-grid">
+        <div class="table-loading"><span class="spinner"></span>Loading map...</div>
+      </div>
+    </div>
+
+    </div><!-- /main-col -->
+    </div><!-- /analysis-body -->
+
+  </div><!-- /analysis-wrap -->
+</div><!-- /sec-analysis -->
+
+<!-- ── Service Mismatch Warning Dialog ────────────────── -->
+<div id="warn-overlay" style="display:none;position:fixed;inset:0;
+     background:rgba(0,0,0,.7);z-index:9999;align-items:center;justify-content:center;">
+  <div style="background:var(--warn-surface);border-radius:16px;padding:28px 32px;max-width:560px;width:92%;
+              border:1px solid rgba(251,191,36,.35);box-shadow:0 24px 64px rgba(0,0,0,.6);">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#FBBF24" stroke-width="2">
+        <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+        <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+      </svg>
+      <span style="color:#FBBF24;font-size:1.05rem;font-weight:700;">
+        Service name differences detected
+      </span>
+    </div>
+    <div id="warn-detail"
+         style="font-size:.81rem;color:rgba(255,255,255,.65);white-space:pre-wrap;
+                line-height:1.75;margin-bottom:14px;background:rgba(0,0,0,.25);
+                padding:11px 14px;border-radius:8px;border:1px solid rgba(255,255,255,.07);
+                font-family:monospace;"></div>
+    <div style="font-size:.81rem;color:rgba(255,255,255,.45);line-height:1.65;margin-bottom:22px;">
+      In Oracle RAC environments, different nodes may legitimately expose different service names.
+      You can continue the analysis anyway — but be aware the results might reflect
+      connections from unrelated databases merged into one session.
+    </div>
+    <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <button onclick="cancelWarn()"
+        style="padding:9px 22px;border-radius:8px;font-size:.85rem;font-weight:600;
+               border:1px solid rgba(255,255,255,.18);background:transparent;
+               color:rgba(255,255,255,.7);cursor:pointer;transition:opacity .15s;"
+        onmouseover="this.style.opacity='.75'" onmouseout="this.style.opacity='1'">
+        Cancel
+      </button>
+      <button onclick="confirmWarn()"
+        style="padding:9px 22px;border-radius:8px;font-size:.85rem;font-weight:600;
+               border:none;background:var(--primary);color:#fff;cursor:pointer;transition:opacity .15s;"
+        onmouseover="this.style.opacity='.85'" onmouseout="this.style.opacity='1'">
+        Continue anyway
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Legal Disclaimer Modal ────────────────────────────── -->
+<div class="modal-overlay" id="legal-modal" style="z-index:2000;align-items:center;">
+  <div class="modal-box" style="max-width:560px;">
+    <div style="padding:28px 28px 24px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="2" style="flex-shrink:0;">
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+          <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+        <h2 style="margin:0;font-size:1.05rem;font-weight:700;color:var(--text);">Legal Disclaimer</h2>
+      </div>
+      <p style="font-size:.85rem;color:var(--muted);line-height:1.65;margin:0 0 12px;">
+        <strong style="color:var(--text);">OLLDA</strong> is provided <em>"as is"</em> for informational and diagnostic purposes only.
+        The author and contributors accept <strong style="color:var(--text);">no liability</strong> for:
+      </p>
+      <ul style="font-size:.83rem;color:var(--muted);line-height:1.7;margin:0 0 14px;padding-left:18px;">
+        <li>Data leakage or exposure resulting from its use</li>
+        <li>Violations of your organisation's security or data-handling policies</li>
+        <li>Any direct, indirect, or consequential damages arising from the tool</li>
+        <li>Unauthorised access to data uploaded during a session</li>
+      </ul>
+      <p style="font-size:.82rem;color:var(--muted);line-height:1.6;margin:0 0 22px;">
+        <strong style="color:var(--text);">You are solely responsible</strong> for ensuring compliance with applicable laws and your organisation's policies before uploading any data.
+      </p>
+      <div style="display:flex;justify-content:flex-end;gap:10px;">
+        <button onclick="acceptLegal()"
+          style="padding:9px 24px;border-radius:8px;border:none;background:var(--primary);
+                 color:#fff;font-size:.88rem;font-weight:600;cursor:pointer;">
+          I Understand &amp; Agree
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── IP Detail Modal ─────────────────────────────────── -->
+<div class="modal-overlay" id="ip-modal" onclick="if(event.target===this)closeModal()">
+  <div class="modal-box">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="modal-title"></div>
+        <div class="modal-subtitle" id="modal-subtitle"></div>
+      </div>
+      <button class="modal-close" onclick="closeModal()">&#10005;</button>
+    </div>
+    <div class="modal-kpis" id="modal-kpis"></div>
+    <div class="modal-body">
+      <!-- Programs chart — full width -->
+      <div class="modal-section">
+        <div class="modal-section-title">Programs</div>
+        <div style="position:relative;height:220px;"><canvas id="modal-prog-chart"></canvas></div>
+      </div>
+      <!-- Services — full width -->
+      <div class="modal-section">
+        <div class="modal-section-title">Services</div>
+        <div class="mini-list" id="modal-svc-list"></div>
+      </div>
+      <!-- OS Users + Hostnames — two columns -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+        <div class="modal-section">
+          <div class="modal-section-title">OS Users</div>
+          <div class="mini-list" id="modal-user-list"></div>
+        </div>
+        <div class="modal-section">
+          <div class="modal-section-title">Hostnames</div>
+          <div class="mini-list" id="modal-host-list"></div>
+        </div>
+      </div>
+      <!-- Hour activity -->
+      <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:8px;">
+          <div class="modal-section-title" id="modal-hour-title" style="margin-bottom:0;">Activity by Hour (all days)</div>
+          <div id="modal-day-pills" style="display:flex;flex-wrap:wrap;gap:4px;"></div>
+        </div>
+        <div style="position:relative;height:180px;"><canvas id="modal-hour-chart"></canvas></div>
+      </div>
+      <!-- Date activity -->
+      <div>
+        <div class="modal-section-title">Activity by Date</div>
+        <div style="position:relative;height:160px;"><canvas id="modal-date-chart"></canvas></div>
+      </div>
+      <!-- Failures -->
+      <div id="modal-fail-section" style="display:none;">
+        <div class="modal-section-title" style="color:var(--danger);">Failed Connections</div>
+        <div class="mini-list" id="modal-fail-list"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ── Oracle error dictionary ───────────────────────────────────────────────
+  const ORA_ERRORS = {
+    '28':    { msg: 'Your session has been killed',                                          cause: 'The DBA or another privileged user terminated this session.' },
+    '1017':  { msg: 'Invalid username/password; logon denied',                               cause: 'The credentials provided do not match any database account, or the account requires case-sensitive password.' },
+    '1033':  { msg: 'Oracle initialization or shutdown in progress',                         cause: 'The database is currently starting up or shutting down and cannot accept connections.' },
+    '1034':  { msg: 'Oracle not available',                                                  cause: 'The database instance is not running or the listener cannot reach it.' },
+    '1089':  { msg: 'Immediate shutdown or close in progress',                               cause: 'A SHUTDOWN IMMEDIATE or SHUTDOWN ABORT is in progress; new connections are rejected.' },
+    '3113':  { msg: 'End-of-file on communication channel',                                  cause: 'The network connection to the server was abruptly closed — may indicate a crash, timeout, or firewall reset.' },
+    '3114':  { msg: 'Not connected to Oracle',                                               cause: 'The client attempted an operation without an active database session.' },
+    '12154': { msg: 'TNS:could not resolve the connect identifier specified',                cause: 'The service name or alias in the connect string could not be found in tnsnames.ora or the naming method failed.' },
+    '12157': { msg: 'TNS:internal network communication error',                              cause: 'An internal networking error occurred in the Oracle Net layer.' },
+    '12161': { msg: 'TNS:internal error: partial data received',                             cause: 'A partial packet was received; usually a network instability or mismatched client/server versions.' },
+    '12170': { msg: 'TNS:connect timeout occurred',                                          cause: 'The client timed out waiting for the server to respond — check SQLNET.INBOUND_CONNECT_TIMEOUT and network latency.' },
+    '12203': { msg: 'TNS:unable to connect to destination',                                  cause: 'Oracle Net could not reach the specified host. Verify the host address and that the listener is running.' },
+    '12224': { msg: 'TNS:no listener',                                                       cause: 'There is no listener running on the target host/port combination.' },
+    '12500': { msg: 'TNS:listener failed to start a dedicated server process',               cause: 'The OS refused to spawn a new server process — check ulimits, OS resource quotas, and Oracle process limits.' },
+    '12505': { msg: 'TNS:listener does not currently know of SID given in connect descriptor',cause: 'The SID in the connect string is not registered with this listener. Use SERVICE_NAME or check ORACLE_SID.' },
+    '12506': { msg: 'TNS:listener rejected connection due to invalid client ID',             cause: 'Client validation rules or Valid Node Checking (sqlnet.ora) rejected this source address.' },
+    '12509': { msg: 'TNS:listener failed to redirect client to service handler',             cause: 'The listener found a matching handler but could not forward the connection. The handler may have died.' },
+    '12510': { msg: 'TNS:database temporarily lacks resources to handle the request',        cause: 'The database is out of processes or sessions. Increase PROCESSES/SESSIONS init parameters or investigate connection pooling.' },
+    '12511': { msg: 'TNS:service handler found but it is not accepting connections currently',cause: 'The dispatcher or dedicated handler is blocked. May occur during startup or overload.' },
+    '12514': { msg: 'TNS:listener does not currently know of service requested',             cause: 'The SERVICE_NAME is not registered with the listener. Ensure the DB instance is running and has registered with the listener (lsnrctl status).' },
+    '12516': { msg: 'TNS:listener could not find available handler with matching protocol stack', cause: 'No handler accepts the protocol combination requested. Check shared/dedicated server configuration.' },
+    '12518': { msg: 'TNS:listener could not hand off client connection',                     cause: 'Listener received the connection but failed to pass it to a server process. Check OS limits and Oracle alert log.' },
+    '12519': { msg: 'TNS:no appropriate service handler found',                              cause: 'The PROCESSES limit was reached or all handlers are busy. Increase DB PROCESSES parameter.' },
+    '12520': { msg: 'TNS:listener could not find available handler for requested type of server', cause: 'All server processes of the required type (dedicated/shared) are in use or unavailable.' },
+    '12521': { msg: 'TNS:listener does not currently know of instance requested',            cause: 'The INSTANCE_NAME is not registered. Ensure the instance is running and registered (ALTER SYSTEM REGISTER).' },
+    '12523': { msg: 'TNS:listener could not find instance appropriate for the client connection', cause: 'No instance matching the routing policy was available at connection time. Often a load-balancing or failover issue.' },
+    '12524': { msg: 'TNS:listener could not resolve the COMMAND given',                      cause: 'The listener received an unrecognized command. Possible version mismatch or malformed connect packet.' },
+    '12525': { msg: 'TNS:listener has not received client request in time allowed',          cause: 'The client connected but did not send the connect data within INBOUND_CONNECT_TIMEOUT. Possible port-scanner or slow client.' },
+    '12526': { msg: 'TNS:listener: all appropriate instances are blocking new connections',  cause: 'Every matching instance has the database in RESTRICTED mode or is overloaded.' },
+    '12527': { msg: 'TNS:listener: all appropriate instances are in restricted mode',        cause: 'STARTUP RESTRICT was used or ALTER SYSTEM ENABLE RESTRICTED SESSION is active.' },
+    '12528': { msg: 'TNS:listener: all appropriate instances are blocking new connections',  cause: 'All instances are rejecting connections — check for maintenance mode or resource exhaustion.' },
+    '12529': { msg: 'TNS:connect request rejected based on current filtering rules',         cause: 'Valid Node Checking (TCP.VALIDNODE_CHECKING) blocked this IP. Update sqlnet.ora TCP.INVITED_NODES.' },
+    '12535': { msg: 'TNS:operation timed out',                                               cause: 'A network operation exceeded its timeout. Check SQLNET.EXPIRE_TIME and firewall idle-connection timeouts.' },
+    '12537': { msg: 'TNS:connection closed',                                                 cause: 'The remote end closed the connection unexpectedly — may be a listener restart, firewall, or server crash.' },
+    '12541': { msg: 'TNS:no listener',                                                       cause: 'No Oracle listener is running on the target host and port. Start the listener: lsnrctl start.' },
+    '12543': { msg: 'TNS:destination host unreachable',                                      cause: 'Network routing cannot reach the target host. Check DNS, routing, and firewall rules.' },
+    '12545': { msg: 'Connect failed because target host or object does not exist',           cause: 'The hostname resolved but the host is not reachable or the listener is not responding on the port.' },
+    '12560': { msg: 'TNS:protocol adapter error',                                            cause: 'A low-level protocol error occurred. On Windows, check that the Oracle services are running.' },
+    '12564': { msg: 'TNS:connection refused',                                                cause: 'The listener actively refused the connection. Check listener configuration and valid node checking rules.' },
+    '17002': { msg: 'I/O Exception: The Network Adapter could not establish the connection', cause: 'JDBC-level error: the JDBC driver could not reach the listener. Verify host, port, and firewall rules.' },
+    '28000': { msg: 'The account is locked',                                                 cause: 'Too many failed login attempts locked the account. Unlock with: ALTER USER <name> ACCOUNT UNLOCK.' },
+    '28001': { msg: 'The password has expired',                                              cause: 'The user password has exceeded its lifetime. User must change password or DBA must reset it.' },
+    '28002': { msg: 'The password will expire within N days',                                cause: 'Password is approaching expiry. Prompt the user to change it soon.' },
+    '28040': { msg: 'No matching authentication protocol',                                   cause: 'Client and server cannot agree on an authentication method. Check SQLNET.ALLOWED_LOGON_VERSION settings.' },
+  };
+
+  // ── State ─────────────────────────────────────────────────────────────────
+  let session = null, currentGroupBy = ['client_ip'];
+  let allHeaders = [], allRows = [];
+  let sortColIdx = 0, sortAsc = false, filterText = '';
+  let currentView = 'table', failuresOnly = false;
+  let treeExpanded = new Set(), treeFailOnly = false;
+  let chartBar = null, chartDonut = null, chartPie = null;
+  let mChartProg = null, mChartHour = null, mChartDate = null;
+
+  const NUM_HEADERS = new Set([
+    'Connections','Success','Failures','% Success',
+    '# Client IP','# Program','# Client Host','# OS User','# Service',
+  ]);
+  const PALETTE = ['#2563EB','#7C3AED','#0891B2','#16A34A','#D97706',
+                   '#DC2626','#DB2777','#4F46E5','#059669','#B45309','#6B7280'];
+
+  // ── Sections ──────────────────────────────────────────────────────────────
+  function show(id) {
+    document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+    document.getElementById(id).classList.add('active');
+  }
+
+  // ── Upload ────────────────────────────────────────────────────────────────
+  let pendingFiles = [];
+
+  const dropzone = document.getElementById('dropzone');
+  const fileIn   = document.getElementById('file-in');
+  // Prevent browser from opening files dropped anywhere on the page
+  document.addEventListener('dragover', e => e.preventDefault());
+  document.addEventListener('drop',     e => e.preventDefault());
+
+  // Visual feedback only on the dropzone card
+  dropzone.addEventListener('dragover',  e => { e.stopPropagation(); e.preventDefault(); dropzone.classList.add('drag'); });
+  dropzone.addEventListener('dragleave', e => { if (!dropzone.contains(e.relatedTarget)) dropzone.classList.remove('drag'); });
+
+  // Accept drops on the entire upload section (hero), not just the card
+  document.getElementById('sec-upload').addEventListener('drop', e => {
+    e.preventDefault();
+    dropzone.classList.remove('drag');
+    if (e.dataTransfer.files.length) addFiles(Array.from(e.dataTransfer.files));
+  });
+  fileIn.addEventListener('change', () => {
+    if (fileIn.files.length) { addFiles(Array.from(fileIn.files)); fileIn.value = ''; }
+  });
+
+  function addFiles(newFiles) {
+    // Merge, avoid exact name+size duplicates
+    newFiles.forEach(f => {
+      if (!pendingFiles.some(p => p.name === f.name && p.size === f.size))
+        pendingFiles.push(f);
+    });
+    renderStagedArea();
+  }
+
+  function removeFile(idx) {
+    pendingFiles.splice(idx, 1);
+    renderStagedArea();
+  }
+
+  function renderStagedArea() {
+    const area = document.getElementById('staged-area');
+    const list = document.getElementById('file-list');
+
+    if (!pendingFiles.length) { area.style.display = 'none'; return; }
+    area.style.display = '';
+
+    list.innerHTML = pendingFiles.map((f, i) => `
+      <div style="display:flex;align-items:center;gap:8px;padding:5px 0;
+                  border-bottom:1px solid var(--file-item-sep);">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#60A5FA" stroke-width="2" style="flex-shrink:0;">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+        </svg>
+        <span style="font-size:.82rem;color:var(--file-item-name);flex:1;
+                     overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+              title="${esc(f.name)}">${esc(f.name)}</span>
+        <span style="font-size:.75rem;color:var(--file-item-size);flex-shrink:0;">
+          ${(f.size/1024/1024).toFixed(1)} MB
+        </span>
+        <button onclick="removeFile(${i})"
+                style="background:none;border:none;cursor:pointer;color:rgba(255,100,100,.6);
+                       font-size:.9rem;padding:0 2px;line-height:1;flex-shrink:0;"
+                title="Remove">✕</button>
+      </div>`).join('');
+  }
+
+  // ── IT Quotes ─────────────────────────────────────────────────────────────
+  const IT_QUOTES = [
+    // — Funny / DBA classics —
+    { text: "It works on my machine.", author: "Every developer, ever" },
+    { text: "It's not a bug — it's an undocumented feature.", author: "Anonymous" },
+    { text: "A DBA's job is never done — it just gets queued.", author: "Anonymous DBA" },
+    { text: "The database is not down. It's resting.", author: "Anonymous DBA, 3am" },
+    { text: "99 little bugs in the code, 99 little bugs…\nTake one down, patch it around — 127 little bugs in the code.", author: "Anonymous" },
+    { text: "A SQL query walks into a bar, walks up to two tables and asks… 'Can I join you?'", author: "Classic DBA joke" },
+    { text: "Weeks of coding can save you hours of planning.", author: "Unknown" },
+    { text: "There is no cloud. It's just someone else's computer.", author: "Anonymous" },
+    { text: "The problem with troubleshooting is that trouble shoots back.", author: "Unknown" },
+    { text: "User: It doesn't work.\nDBA: Did you try turning it off and on again?", author: "IT Support, worldwide" },
+    { text: "TRUNCATE without a WHERE clause is just DELETE in a hurry.", author: "Anonymous DBA" },
+    { text: "A transaction is like a marriage: either everything commits, or everything rolls back.", author: "Anonymous" },
+    { text: "Hardware eventually fails. Software eventually works.", author: "Michael Hartung" },
+    { text: "Always code as if the person who ends up maintaining your code will be a violent psychopath who knows where you live.", author: "John F. Woods" },
+    { text: "One man's crappy software is another man's full-time job.", author: "Jessica Gaston" },
+    { text: "Fast, good, cheap — pick two.", author: "Classic project management" },
+    { text: "It's always DNS.", author: "SRE proverb" },
+    { text: "Have you tried turning it off and on again?", author: "The IT Crowd" },
+    { text: "The cloud is just someone else's data center with better marketing.", author: "Anonymous" },
+    // — Classic / timeless —
+    { text: "There are only two hard things in Computer Science: cache invalidation and naming things.", author: "Phil Karlton" },
+    { text: "The best performance improvement is the transition from the nonworking state to the working state.", author: "John Ousterhout" },
+    { text: "In theory, there is no difference between theory and practice. In practice, there is.", author: "Yogi Berra" },
+    { text: "The first rule of optimization: don't do it.\nThe second rule: don't do it yet.", author: "Michael A. Jackson" },
+    { text: "Any fool can write code that a computer can understand. Good programmers write code that humans can understand.", author: "Martin Fowler" },
+    { text: "If debugging is the process of removing bugs, then programming must be the process of putting them in.", author: "Edsger W. Dijkstra" },
+    { text: "Talk is cheap. Show me the code.", author: "Linus Torvalds" },
+    { text: "Make it work, make it right, make it fast.", author: "Kent Beck" },
+    { text: "First, solve the problem. Then, write the code.", author: "John Johnson" },
+    { text: "Programs must be written for people to read, and only incidentally for machines to execute.", author: "Harold Abelson" },
+    { text: "The function of good software is to make the complex appear to be simple.", author: "Grady Booch" },
+    { text: "Measuring programming progress by lines of code is like measuring aircraft building progress by weight.", author: "Bill Gates" },
+    { text: "Without requirements or design, programming is the art of adding bugs to an empty text file.", author: "Louis Srygley" },
+    { text: "The most important property of a program is whether it accomplishes the intention of its user.", author: "C.A.R. Hoare" },
+    { text: "Simplicity is the soul of efficiency.", author: "Austin Freeman" },
+    { text: "The best way to predict the future is to invent it.", author: "Alan Kay" },
+    { text: "Complexity is the enemy of reliability.", author: "Werner Vogels" },
+    { text: "A computer lets you make more mistakes faster than any other invention — except handguns and tequila.", author: "Mitch Ratcliffe" },
+  ];
+
+  function showParseQuote() {
+    const box    = document.getElementById('prog-quote');
+    const text   = document.getElementById('prog-quote-text');
+    const author = document.getElementById('prog-quote-author');
+    const q = IT_QUOTES[Math.floor(Math.random() * IT_QUOTES.length)];
+    box.style.opacity = '0';
+    setTimeout(() => {
+      text.innerHTML     = '&ldquo;' + esc(q.text).replace(/\n/g, '<br>') + '&rdquo;';
+      author.textContent = q.author ? `— ${q.author}` : '';
+      box.style.opacity  = '1';
+    }, 100);
+  }
+
+  function hideParseQuote() {
+    document.getElementById('prog-quote').style.opacity = '0';
+  }
+
+  // ── Warning dialog state ─────────────────────────────────────────────────
+  let _warnSid = null, _warnFiles = null;
+
+  function _listenProgress(sid) {
+    session = sid;
+    const es = new EventSource(`/progress/${sid}`);
+    es.onmessage = e => {
+      const d = JSON.parse(e.data);
+      if (d.error || d.status === 'error') {
+        es.close(); hideParseQuote(); showError(d.error || 'Parse error'); return;
+      }
+      if (d.status === 'ready') {
+        es.close();
+        hideParseQuote();
+        updateBar(100, `Done — ${fmt(d.parsed)} connections parsed.`);
+        document.getElementById('bar-fill').classList.add('done');
+        setTimeout(() => showAnalysis(d.summary), 600);
+      } else {
+        updateBar(d.pct, `${fmt(d.parsed)} connections found...`);
+      }
+    };
+  }
+
+  async function startUpload() {
+    const files = [...pendingFiles];
+    if (!files.length) return;
+    pendingFiles = [];
+    document.getElementById('staged-area').style.display = 'none';
+    document.getElementById('prog-title').textContent = files.length === 1 ? 'Parsing File' : 'Parsing Files';
+    const label = files.length === 1 ? files[0].name : `${files.length} files (RAC merge)`;
+    document.getElementById('prog-filename').textContent = label;
+    document.getElementById('file-label').textContent   = label;
+    show('sec-progress');
+    updateBar(0, 'Uploading...');
+    showParseQuote();
+
+    const fd = new FormData();
+    files.forEach(f => fd.append('file', f));
+
+    let resp;
+    try {
+      resp = await fetch('/upload', { method: 'POST', body: fd });
+    } catch(e) { showError(e); return; }
+
+    if (!resp.ok) { showError('Upload failed'); return; }
+    const data = await resp.json();
+
+    if (data.warning) {
+      // Server detected service differences — show warning dialog
+      _warnSid   = data.session_id;
+      _warnFiles = files;
+      hideParseQuote();
+      show('sec-upload');
+      document.getElementById('warn-detail').textContent = data.warning_msg || '';
+      const el = document.getElementById('warn-overlay');
+      el.style.display = 'flex';
+      return;
+    }
+
+    _listenProgress(data.session_id);
+  }
+
+  function cancelWarn() {
+    document.getElementById('warn-overlay').style.display = 'none';
+    if (_warnSid) {
+      fetch(`/cancel/${_warnSid}`, { method: 'POST' });
+      _warnSid = null;
+    }
+    // Restore files to staging so the user can decide what to do
+    if (_warnFiles) {
+      _warnFiles.forEach(f => {
+        if (!pendingFiles.some(p => p.name === f.name && p.size === f.size))
+          pendingFiles.push(f);
+      });
+      _warnFiles = null;
+      renderStagedArea();
+    }
+  }
+
+  async function confirmWarn() {
+    document.getElementById('warn-overlay').style.display = 'none';
+    const sid = _warnSid;
+    _warnSid = _warnFiles = null;
+
+    const resp = await fetch(`/confirm/${sid}`, { method: 'POST' });
+    if (!resp.ok) { showError('Failed to start analysis'); return; }
+
+    show('sec-progress');
+    updateBar(0, 'Starting...');
+    showParseQuote();
+    _listenProgress(sid);
+  }
+  function updateBar(pct, msg) {
+    document.getElementById('bar-fill').style.width   = pct + '%';
+    document.getElementById('prog-pct').textContent   = pct + '%';
+    document.getElementById('prog-stats').textContent = msg;
+  }
+  function showError(msg) { show('sec-upload'); alert('Error: ' + msg); }
+
+  // ── Analysis ──────────────────────────────────────────────────────────────
+  function showAnalysis(sm) {
+    document.getElementById('st-total').textContent   = fmt(sm.total);
+    document.getElementById('st-success').textContent = fmt(sm.success);
+    document.getElementById('st-fail').textContent    = fmt(sm.failures);
+    document.getElementById('st-ips').textContent     = fmt(sm.uniq_ips);
+    document.getElementById('st-prog').textContent    = fmt(sm.uniq_prog);
+    document.getElementById('st-svc').textContent     = fmt(sm.uniq_svc);
+    document.getElementById('st-host').textContent    = fmt(sm.uniq_host);
+    document.getElementById('st-user').textContent    = fmt(sm.uniq_user);
+    document.getElementById('period-badge').textContent =
+      'Collection interval:  ' + (sm.first||'').substring(0,10) + '  →  ' + (sm.last||'').substring(0,10);
+    show('sec-analysis');
+    setGroupBy(['client_ip']);
+    loadConnectionMap();
+  }
+
+  // ── Grouping ──────────────────────────────────────────────────────────────
+  function setGroupBy(dims) {
+    currentGroupBy = dims; updatePills(); updateQuickBtns(); loadTable();
+  }
+  function toggleDim(key) {
+    const i = currentGroupBy.indexOf(key);
+    if (i === -1) currentGroupBy = [...currentGroupBy, key];
+    else if (currentGroupBy.length > 1) currentGroupBy = currentGroupBy.filter(k => k !== key);
+    updatePills(); updateQuickBtns(); loadTable();
+  }
+  function updatePills() {
+    document.querySelectorAll('.dim-pill').forEach(p =>
+      p.classList.toggle('on', currentGroupBy.includes(p.dataset.dim)));
+  }
+  function updateQuickBtns() {
+    const cur = currentGroupBy.slice().sort().join(',');
+    document.querySelectorAll('.quick-btn').forEach(b =>
+      b.classList.toggle('active', b.dataset.dims.split(',').sort().join(',') === cur));
+  }
+  document.querySelectorAll('.quick-btn').forEach(b =>
+    b.addEventListener('click', () => setGroupBy(b.dataset.dims.split(','))));
+
+  // ── View toggle ───────────────────────────────────────────────────────────
+  function setView(v) {
+    currentView = v;
+    document.getElementById('btn-table') .classList.toggle('active', v === 'table');
+    document.getElementById('btn-chart') .classList.toggle('active', v === 'chart');
+    document.getElementById('btn-iptree').classList.toggle('active', v === 'iptree');
+    document.getElementById('view-table') .style.display = v === 'table'  ? '' : 'none';
+    document.getElementById('view-chart') .style.display = v === 'chart'  ? '' : 'none';
+    document.getElementById('view-iptree').style.display = v === 'iptree' ? '' : 'none';
+    if (v === 'chart'  && allRows.length) renderCharts();
+    if (v === 'iptree' && allRows.length) renderIpTree();
+  }
+
+  // ── IP Network Tree ───────────────────────────────────────────────────────
+  function buildIpTree(rows, ipIdx, connIdx, succIdx, failIdx) {
+    const nodes = {};
+    rows.forEach(row => {
+      const ip = String(row[ipIdx] || '').trim();
+      if (!ip || ip === '(unknown)') return;
+      const parts = ip.split('.');
+      if (parts.length !== 4) return;
+      const conns = Number(row[connIdx] || 0);
+      const succ  = Number(row[succIdx] || 0);
+      const fail  = Number(row[failIdx] || 0);
+      const keys  = [
+        parts[0],
+        parts[0]+'.'+parts[1],
+        parts[0]+'.'+parts[1]+'.'+parts[2],
+        ip
+      ];
+      keys.forEach((key, level) => {
+        if (!nodes[key]) nodes[key] = {
+          key, level, connections: 0, success: 0, failures: 0,
+          children: new Set(), leaf: level === 3,
+          parent: level > 0 ? keys[level - 1] : null
+        };
+        nodes[key].connections += conns;
+        nodes[key].success     += succ;
+        nodes[key].failures    += fail;
+        if (level < 3) nodes[key].children.add(keys[level + 1]);
+      });
+    });
+    return nodes;
+  }
+
+  function renderIpTree() {
+    const ipIdx   = allHeaders.indexOf('Client IP');
+    const connIdx = allHeaders.indexOf('Connections');
+    const succIdx = allHeaders.indexOf('Success');
+    const failIdx = allHeaders.indexOf('Failures');
+
+    const area = document.getElementById('iptree-area');
+    if (ipIdx < 0) {
+      area.innerHTML = '<div class="table-loading">Switch to <strong>By IP</strong> grouping to use IP Tree view.</div>';
+      document.getElementById('iptree-chart-wrap').innerHTML = '';
+      return;
+    }
+
+    let source = filterText
+      ? allRows.filter(r => r.some(v => String(v ?? '').toLowerCase().includes(filterText.toLowerCase())))
+      : allRows;
+
+    if (treeFailOnly && failIdx >= 0) {
+      source = source.filter(r => Number(r[failIdx] ?? 0) > 0);
+    }
+
+    const tree  = buildIpTree(source, ipIdx, connIdx, succIdx, failIdx);
+    const roots = Object.values(tree)
+      .filter(n => n.level === 0)
+      .sort((a, b) => b.connections - a.connections);
+
+    const rowsHtml = [];
+    function renderNode(node, depth) {
+      const expanded    = treeExpanded.has(node.key);
+      const hasChildren = !node.leaf && node.children.size > 0;
+      const pct = node.connections > 0
+        ? (100 * node.success / node.connections).toFixed(1) : '0.0';
+      const subLabel = node.leaf ? '' : node.level < 2
+        ? `${node.children.size} sub-net${node.children.size !== 1 ? 's' : ''}`
+        : `${node.children.size} host${node.children.size !== 1 ? 's' : ''}`;
+      const suffix = node.leaf ? '' : `<span style="color:var(--muted)">.*</span>`;
+
+      const leafClick = node.leaf ? `showIpDetail('${node.key.replace(/'/g,"\\'")}')` : '';
+      const rowClick  = node.leaf ? leafClick : (hasChildren ? `toggleTreeNode('${node.key.replace(/'/g,"\\'")}')` : '');
+      rowsHtml.push(`
+        <tr class="tree-row ${hasChildren ? 'tree-has-children' : 'tree-leaf-row'}"
+            onclick="${rowClick}"
+            style="${node.leaf ? 'cursor:pointer;' : ''}">
+          <td style="padding:7px 14px;border-bottom:1px solid var(--border);">
+            <span style="display:inline-block;width:${depth * 22}px"></span>
+            <span style="display:inline-block;width:18px;font-size:.75rem;color:var(--primary);">
+              ${hasChildren ? (expanded ? '▼' : '▶') : (node.leaf ? '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>' : '')}
+            </span>
+            <span class="tree-prefix" style="font-weight:${depth===0?700:depth===1?600:500}${node.leaf ? ';color:var(--primary)' : ''}">
+              ${esc(node.key)}${suffix}
+            </span>
+            ${subLabel ? `<span class="tree-muted">(${subLabel})</span>` : ''}
+          </td>
+          <td class="num" style="padding:7px 14px;border-bottom:1px solid var(--border);">${fmt(node.connections)}</td>
+          <td class="num" style="padding:7px 14px;border-bottom:1px solid var(--border);color:var(--success);">${fmt(node.success)}</td>
+          <td class="num" style="padding:7px 14px;border-bottom:1px solid var(--border);color:${node.failures > 0 ? 'var(--danger)' : 'inherit'};">${fmt(node.failures)}</td>
+          <td class="num" style="padding:7px 14px;border-bottom:1px solid var(--border);">
+            <span class="badge ${Number(pct) >= 95 ? 'badge-ok' : 'badge-err'}">${pct}%</span>
+          </td>
+        </tr>`);
+
+      if (expanded && hasChildren) {
+        [...node.children]
+          .map(k => tree[k]).filter(Boolean)
+          .sort((a, b) => b.connections - a.connections)
+          .forEach(child => renderNode(child, depth + 1));
+      }
+    }
+    roots.forEach(n => renderNode(n, 0));
+
+    area.innerHTML = `
+      <div class="table-container">
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Network / IP</th>
+                <th class="num">Connections</th>
+                <th class="num">Success</th>
+                <th class="num">Failures</th>
+                <th class="num">% Success</th>
+              </tr>
+            </thead>
+            <tbody>${rowsHtml.join('')}</tbody>
+          </table>
+        </div>
+      </div>`;
+
+    // Chart: show the current visible frontier (expanded nodes replaced by their children)
+    const frontier = getFrontierNodes(roots, tree);
+    const chartTitle = frontier.length === 1
+      ? `Connections — ${frontier[0].key}${frontier[0].leaf ? '' : '.*'}`
+      : `Connections — ${frontier.length} visible network groups`;
+    renderTreeChart(frontier, chartTitle);
+  }
+
+  function getFrontierNodes(roots, tree) {
+    const frontier = [];
+    function walk(node) {
+      const expanded    = treeExpanded.has(node.key);
+      const hasChildren = !node.leaf && node.children.size > 0;
+      if (expanded && hasChildren) {
+        [...node.children]
+          .map(k => tree[k]).filter(Boolean)
+          .sort((a, b) => b.connections - a.connections)
+          .forEach(walk);
+      } else {
+        frontier.push(node);
+      }
+    }
+    roots.forEach(walk);
+    return frontier;
+  }
+
+  function toggleTreeFailOnly() {
+    treeFailOnly = !treeFailOnly;
+    const btn = document.getElementById('btn-tree-fail-only');
+    if (btn) {
+      btn.style.background = treeFailOnly ? 'var(--danger)' : 'transparent';
+      btn.style.color      = treeFailOnly ? '#fff'          : 'var(--danger)';
+    }
+    renderIpTree();
+    if (treeFailOnly) loadTreeFailCodes(); else hideTreeFailCodes();
+  }
+
+  function hideTreeFailCodes() {
+    document.getElementById('iptree-fail-panel').style.display = 'none';
+  }
+
+  async function loadTreeFailCodes() {
+    const panel = document.getElementById('iptree-fail-panel');
+    const list  = document.getElementById('iptree-fail-list');
+    panel.style.display = '';
+    list.innerHTML = '<div class="table-loading"><span class="spinner"></span>Loading...</div>';
+    const res = await fetch(`/query/${session}?g=status_code&limit=200`);
+    if (!res.ok) { list.innerHTML = '<div style="color:var(--muted)">Error loading codes.</div>'; return; }
+    const data = await res.json();
+    const scIdx   = data.headers.indexOf('Status Code');
+    const failIdx = data.headers.indexOf('Failures');
+    const codes = data.rows
+      .filter(r => r[scIdx] !== '0' && r[scIdx] !== '(unknown)' && Number(r[failIdx]) > 0)
+      .sort((a, b) => Number(b[failIdx]) - Number(a[failIdx]))
+      .map(r => [r[scIdx], Number(r[failIdx])]);
+    list.innerHTML = codes.length ? failList(codes)
+      : '<div style="color:var(--muted);font-size:.85rem;">No failure codes found.</div>';
+  }
+
+  function toggleTreeNode(key) {
+    if (treeExpanded.has(key)) {
+      // Collapse node and all its descendants
+      [...treeExpanded].forEach(k => {
+        if (k === key || k.startsWith(key + '.')) treeExpanded.delete(k);
+      });
+    } else {
+      treeExpanded.add(key);
+    }
+    renderIpTree();
+  }
+
+  function renderTreeChart(nodes, title) {
+    const wrap = document.getElementById('iptree-chart-wrap');
+    if (!nodes.length) { wrap.innerHTML = ''; return; }
+    const top = nodes.slice(0, 25);
+    const h   = Math.max(180, top.length * 30);
+    wrap.innerHTML = `
+      <div class="chart-full">
+        <div class="chart-card-title">${esc(title)}</div>
+        <div style="position:relative;height:${h}px;">
+          <canvas id="iptree-chart"></canvas>
+        </div>
+      </div>`;
+    if (window._iptreeChart) { window._iptreeChart.destroy(); window._iptreeChart = null; }
+    window._iptreeChart = new Chart(
+      document.getElementById('iptree-chart').getContext('2d'), {
+        type: 'bar',
+        data: {
+          labels: top.map(n => n.key + (n.leaf ? '' : '.*')),
+          datasets: [
+            ...( treeFailOnly ? [] : [{ label: 'Success', data: top.map(n => n.success), backgroundColor: 'rgba(22,163,74,.85)', stack: 'a' }]),
+            { label: 'Failures', data: top.map(n => n.failures),  backgroundColor: 'rgba(220,38,38,.85)', stack: 'a' },
+          ]
+        },
+        options: {
+          indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { position: 'top' } },
+          scales: {
+            x: { stacked: true, beginAtZero: true, ticks: { precision: 0 } },
+            y: { stacked: true }
+          }
+        }
+      });
+  }
+
+  // ── Load table data ───────────────────────────────────────────────────────
+  async function loadTable() {
+    document.getElementById('table-area').innerHTML =
+      '<div class="table-loading"><span class="spinner"></span>Loading...</div>';
+    document.getElementById('row-count').textContent = '';
+    const params = currentGroupBy.map(g => `g=${g}`).join('&');
+    const res = await fetch(`/query/${session}?${params}&limit=5000`);
+    if (!res.ok) { document.getElementById('table-area').innerHTML = '<div class="table-loading">Error.</div>'; return; }
+    const data = await res.json();
+    allHeaders = data.headers; allRows = data.rows;
+    sortColIdx = allHeaders.indexOf('Connections'); sortAsc = false;
+    filterText = document.getElementById('search-box').value;
+    if (currentView === 'table') renderTable();
+    else if (currentView === 'chart') renderCharts();
+    else if (currentView === 'iptree') renderIpTree();
+  }
+
+  // ── Table ─────────────────────────────────────────────────────────────────
+  function getRows() {
+    const f = filterText
+      ? allRows.filter(r => r.some(v => String(v??'').toLowerCase().includes(filterText.toLowerCase())))
+      : allRows;
+    return f.sort((a, b) => {
+      const num = NUM_HEADERS.has(allHeaders[sortColIdx]);
+      const cmp = num ? (Number(a[sortColIdx]) - Number(b[sortColIdx]))
+                      : String(a[sortColIdx]??'').localeCompare(String(b[sortColIdx]??''));
+      return sortAsc ? cmp : -cmp;
+    });
+  }
+  function renderTable() {
+    const rows = getRows();
+    document.getElementById('row-count').textContent =
+      `${fmt(rows.length)} group${rows.length !== 1 ? 's' : ''}` +
+      (rows.length < allRows.length ? ' (filtered)' : '');
+    const th = allHeaders.map((h, i) => {
+      const num = NUM_HEADERS.has(h);
+      let cls = num ? 'num' : '';
+      if (i === sortColIdx) cls += sortAsc ? ' sort-asc' : ' sort-desc';
+      return `<th class="${cls.trim()}" onclick="sortBy(${i})">${esc(h)}</th>`;
+    }).join('');
+    const trs = rows.map(row => {
+      const cells = row.map((v, i) => {
+        const h = allHeaders[i], num = NUM_HEADERS.has(h);
+        let d = v ?? '';
+        if (num && d !== '') d = Number(d).toLocaleString();
+        if (h === '% Success') {
+          const cls = parseFloat(v) >= 99 ? 'badge-ok' : 'badge-err';
+          return `<td class="num"><span class="badge ${cls}">${d}%</span></td>`;
+        }
+        if (h === 'Failures' && Number(v) > 0)
+          return `<td class="num" style="color:var(--danger)">${d}</td>`;
+        return `<td class="${num?'num':''}" title="${esc(String(v??''))}">${esc(String(d))}</td>`;
+      }).join('');
+      return `<tr>${cells}</tr>`;
+    }).join('');
+    document.getElementById('table-area').innerHTML =
+      `<table><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>`;
+  }
+  function sortBy(idx) {
+    if (sortColIdx === idx) sortAsc = !sortAsc;
+    else { sortColIdx = idx; sortAsc = !NUM_HEADERS.has(allHeaders[idx]); }
+    renderTable();
+  }
+  function applyFilter() {
+    filterText = document.getElementById('search-box').value;
+    if (!allRows.length) return;
+    if (currentView === 'table') renderTable();
+    else if (currentView === 'chart') renderCharts();
+    else if (currentView === 'iptree') renderIpTree();
+  }
+
+  function toggleFailOnly() {
+    failuresOnly = !failuresOnly;
+    const btn = document.getElementById('btn-fail-only');
+    btn.style.background = failuresOnly ? 'var(--danger)' : 'transparent';
+    btn.style.color      = failuresOnly ? '#fff'          : 'var(--danger)';
+    renderCharts();
+    if (failuresOnly) loadFailCodes(); else hideFailCodes();
+  }
+
+  function hideFailCodes() {
+    document.getElementById('fail-codes-panel').style.display = 'none';
+  }
+
+  async function loadFailCodes() {
+    const panel = document.getElementById('fail-codes-panel');
+    const list  = document.getElementById('fail-codes-list');
+    panel.style.display = '';
+    list.innerHTML = '<div class="table-loading"><span class="spinner"></span>Loading...</div>';
+
+    const res = await fetch(`/query/${session}?g=status_code&limit=200`);
+    if (!res.ok) { list.innerHTML = '<div style="color:var(--muted)">Error loading codes.</div>'; return; }
+    const data = await res.json();
+
+    // headers: ['Status Code','Connections','Success','Failures','% Success',...]
+    const scIdx   = data.headers.indexOf('Status Code');
+    const failIdx = data.headers.indexOf('Failures');
+
+    // keep only genuine failures (status_code != '0' and failures > 0)
+    const codes = data.rows
+      .filter(r => r[scIdx] !== '0' && r[scIdx] !== '(unknown)' && Number(r[failIdx]) > 0)
+      .sort((a, b) => Number(b[failIdx]) - Number(a[failIdx]))
+      .map(r => [r[scIdx], Number(r[failIdx])]);
+
+    list.innerHTML = codes.length ? failList(codes)
+      : '<div style="color:var(--muted);font-size:.85rem;">No failure codes found.</div>';
+  }
+
+  // ── Charts ────────────────────────────────────────────────────────────────
+  function renderCharts() {
+    const connIdx = allHeaders.indexOf('Connections');
+    const succIdx = allHeaders.indexOf('Success');
+    const failIdx = allHeaders.indexOf('Failures');
+    const dimCount = connIdx > 0 ? connIdx : 1;
+    const isTime = currentGroupBy.some(g => g === 'date' || g === 'hour');
+
+    let source = filterText
+      ? allRows.filter(r => r.some(v => String(v??'').toLowerCase().includes(filterText.toLowerCase())))
+      : allRows;
+
+    // Failures-only mode: keep only rows with failures > 0, sort by failures DESC
+    if (failuresOnly && failIdx >= 0 && !isTime) {
+      source = source
+        .filter(r => Number(r[failIdx]??0) > 0)
+        .sort((a, b) => Number(b[failIdx]??0) - Number(a[failIdx]??0));
+    }
+
+    const maxBars = isTime ? Math.min(source.length, 200) : Math.min(source.length, 25);
+    const barRows = source.slice(0, maxBars);
+    const labels = barRows.map(r => r.slice(0, dimCount).join(' | '));
+    const conns  = barRows.map(r => Number(r[connIdx]??0));
+    const succs  = barRows.map(r => Number(r[succIdx]??0));
+    const fails  = barRows.map(r => Number(r[failIdx]??0));
+
+    document.getElementById('chart-bar-title').textContent = isTime
+      ? `Connections over Time (${labels.length} points)`
+      : failuresOnly
+        ? `Top ${labels.length} Groups by Failures`
+        : `Top ${labels.length} Groups by Connections`;
+    document.getElementById('bar-wrap').style.height = (isTime ? 300 : Math.max(300, maxBars*30)) + 'px';
+
+    if (chartBar) { chartBar.destroy(); chartBar = null; }
+    const ctxB = document.getElementById('chart-bar').getContext('2d');
+    chartBar = isTime
+      ? new Chart(ctxB, { type:'line', data:{ labels, datasets:[{ label:'Connections', data:conns,
+          borderColor:'#2563EB', backgroundColor:'rgba(37,99,235,.12)', fill:true, tension:.3,
+          pointRadius: labels.length > 60 ? 0 : 3 }]},
+          options:{ responsive:true, maintainAspectRatio:false,
+            plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true, ticks:{ precision:0 } } } } })
+      : new Chart(ctxB, { type:'bar', data:{ labels, datasets:[
+          ...( failuresOnly ? [] : [{ label:'Success', data:succs, backgroundColor:'rgba(22,163,74,.85)', stack:'a' }]),
+          { label:'Failures', data:fails, backgroundColor:'rgba(220,38,38,.85)', stack:'a' },
+        ]}, options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false,
+          plugins:{ legend:{ position:'top' } },
+          onClick: (evt, elements) => {
+            if (!elements.length || currentGroupBy[0] !== 'client_ip') return;
+            const ip = String(barRows[elements[0].index]?.[0] || '');
+            if (/^\d+\.\d+\.\d+\.\d+$/.test(ip)) showIpDetail(ip);
+          },
+          onHover: (evt, elements) => {
+            if (currentGroupBy[0] === 'client_ip')
+              evt.native.target.style.cursor = elements.length ? 'pointer' : 'default';
+          },
+          scales:{ x:{ stacked:true, beginAtZero:true, ticks:{ precision:0 } },
+            y:{ stacked:true, ticks:{ callback:(v,i) => {
+              const l = labels[i]||''; return l.length>35 ? l.substring(0,33)+'…' : l;
+            }}}}}});
+
+    if (chartDonut) { chartDonut.destroy(); chartDonut = null; }
+    const total = source.reduce((s,r) => s+Number(r[connIdx]??0), 0);
+    const top10 = source.slice(0,10);
+    const others = source.slice(10).reduce((s,r) => s+Number(r[connIdx]??0), 0);
+    const dL = top10.map(r => r.slice(0,dimCount).join(' | '));
+    const dV = top10.map(r => Number(r[connIdx]??0));
+    if (others > 0) { dL.push('Others'); dV.push(others); }
+    chartDonut = new Chart(document.getElementById('chart-donut').getContext('2d'), {
+      type:'doughnut', data:{ labels:dL, datasets:[{ data:dV,
+        backgroundColor:PALETTE.slice(0,dV.length), borderWidth:2, borderColor:'#fff' }]},
+      options:{ responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{ position:'bottom', labels:{ font:{ size:11 }, boxWidth:12, padding:10 } },
+          tooltip:{ callbacks:{ label: ctx => {
+            const pct = total > 0 ? ((ctx.raw/total)*100).toFixed(1) : 0;
+            return ` ${ctx.raw.toLocaleString()} (${pct}%)`;
+          }}}}}});
+
+    if (chartPie) { chartPie.destroy(); chartPie = null; }
+    const ts = source.reduce((s,r) => s+Number(r[succIdx]??0), 0);
+    const tf = source.reduce((s,r) => s+Number(r[failIdx]??0), 0);
+    chartPie = new Chart(document.getElementById('chart-pie').getContext('2d'), {
+      type:'doughnut', data:{ labels:['Success','Failures'],
+        datasets:[{ data:[ts,tf], backgroundColor:['rgba(22,163,74,.85)','rgba(220,38,38,.85)'],
+          borderWidth:2, borderColor:'#fff' }]},
+      options:{ responsive:true, maintainAspectRatio:false,
+        plugins:{ legend:{ position:'bottom', labels:{ font:{ size:12 }, boxWidth:14 } },
+          tooltip:{ callbacks:{ label: ctx => {
+            const tot = ts+tf, pct = tot ? ((ctx.raw/tot)*100).toFixed(2) : 0;
+            return ` ${ctx.raw.toLocaleString()} (${pct}%)`;
+          }}}}}});
+
+    document.getElementById('row-count').textContent =
+      `${fmt(source.length)} group${source.length!==1?'s':''}` +
+      (source.length < allRows.length ? ' (filtered)' : '');
+  }
+
+  // ── Export ────────────────────────────────────────────────────────────────
+  function exportExcel() {
+    if (!session) return;
+    window.location = `/export/${session}?` + currentGroupBy.map(g => `g=${g}`).join('&');
+  }
+
+  // ── Connection Map ────────────────────────────────────────────────────────
+  async function loadConnectionMap() {
+    const grid = document.getElementById('ip-map-grid');
+    grid.innerHTML = '<div class="table-loading"><span class="spinner"></span>Building map...</div>';
+    const res = await fetch(`/ipmap/${session}`);
+    if (!res.ok) { grid.innerHTML = '<div class="table-loading">Error loading map.</div>'; return; }
+    const data = await res.json();
+    if (!data.ips?.length) { grid.innerHTML = '<div class="table-loading">No IP data.</div>'; return; }
+
+    document.getElementById('map-count').textContent = `${data.ips.length} IPs`;
+
+    // Populate datalist
+    const dl = document.getElementById('ip-datalist');
+    dl.innerHTML = data.ips.map(ip => {
+      const label = ip.host ? `${ip.ip}  —  ${ip.host}` : ip.ip;
+      return `<option value="${esc(ip.ip)}">${esc(label)}</option>`;
+    }).join('');
+
+    grid.innerHTML = data.ips.map(ip => {
+      const tier = ip.pct >= 10 ? 't4' : ip.pct >= 3 ? 't3' : ip.pct >= 0.5 ? 't2' : 't1';
+      const host = ip.host
+        ? `<div class="ip-host" title="${esc(ip.host)}">${esc(ip.host)}</div>`
+        : `<div class="ip-host">(no hostname)</div>`;
+      return `
+        <div class="ip-card ${tier}" onclick="showIpDetail('${esc(ip.ip)}')" title="Click for details">
+          <div class="ip-icon">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4">
+              <rect x="2" y="3" width="20" height="14" rx="2"/>
+              <line x1="8" y1="21" x2="16" y2="21"/>
+              <line x1="12" y1="17" x2="12" y2="21"/>
+            </svg>
+          </div>
+          <div class="ip-pct">${ip.pct}%</div>
+          <div class="ip-addr">${esc(ip.ip)}</div>
+          ${host}
+          <div class="ip-count">${fmt(ip.connections)} conns</div>
+        </div>`;
+    }).join('');
+  }
+
+  function filterMap() {
+    const term = document.getElementById('map-search').value.trim().toLowerCase();
+    const cards = document.querySelectorAll('#ip-map-grid .ip-card');
+    let visible = 0;
+    cards.forEach(card => {
+      const ip   = card.querySelector('.ip-addr')?.textContent.trim().toLowerCase() || '';
+      const host = card.querySelector('.ip-host')?.textContent.trim().toLowerCase() || '';
+      const match = !term || ip.includes(term) || host.includes(term);
+      card.style.display = match ? '' : 'none';
+      if (match) visible++;
+    });
+    const total = cards.length;
+    document.getElementById('map-count').textContent =
+      term ? `${visible} of ${total}` : `${total} IPs`;
+  }
+
+  // ── IP Detail Modal ───────────────────────────────────────────────────────
+  async function showIpDetail(ip) {
+    const res = await fetch(`/detail/${session}?ip=${encodeURIComponent(ip)}`);
+    if (!res.ok) return;
+    const d = await res.json();
+
+    document.getElementById('modal-title').textContent = ip;
+    const hosts = d.hosts.map(h => h[0]).filter(h => h !== '(no hostname)').join(', ');
+    document.getElementById('modal-subtitle').textContent =
+      (hosts || '(no hostname)') + '   |   ' + (d.first||'').substring(0,10) + ' to ' + (d.last||'').substring(0,10);
+
+    document.getElementById('modal-kpis').innerHTML = [
+      [fmt(d.total),      'Total Connections'],
+      [d.pct + '%',       '% of All Traffic'],
+      [fmt(d.success),    'Successful'],
+      [fmt(d.failures),   'Failures'],
+      [d.uniq_programs,   'Programs'],
+      [d.uniq_services,   'Services'],
+      [d.uniq_users,      'OS Users'],
+    ].map(([v, l]) =>
+      `<div class="modal-kpi"><div class="kv">${v}</div><div class="kl">${l}</div></div>`
+    ).join('');
+
+    // Lists
+    const maxProg = d.programs[0]?.[1] || 1;
+    document.getElementById('modal-svc-list').innerHTML = miniList(d.services, 6);
+    document.getElementById('modal-user-list').innerHTML = miniList(d.users, 6);
+    document.getElementById('modal-host-list').innerHTML = miniList(d.hosts, 4);
+
+    // Failures
+    if (d.fail_codes?.length) {
+      document.getElementById('modal-fail-section').style.display = '';
+      document.getElementById('modal-fail-list').innerHTML = failList(d.fail_codes);
+    } else {
+      document.getElementById('modal-fail-section').style.display = 'none';
+    }
+
+    document.getElementById('ip-modal').classList.add('open');
+
+    // Charts — after modal is visible
+    setTimeout(() => {
+      renderModalCharts(d, maxProg);
+    }, 30);
+  }
+
+  function miniList(rows, maxRows) {
+    if (!rows.length) return '<div style="color:var(--muted);font-size:.83rem;">None</div>';
+    const maxVal = rows[0][1] || 1;
+    return rows.slice(0, maxRows).map(([label, count]) => `
+      <div class="mini-item">
+        <div>
+          <div class="mini-item-label" title="${esc(String(label))}">${esc(String(label))}</div>
+          <div class="mini-prog-bar"><div class="mini-prog-fill" style="width:${Math.round(100*count/maxVal)}%"></div></div>
+        </div>
+        <span class="mini-item-count">${fmt(count)}</span>
+      </div>`).join('');
+  }
+
+  function failList(codes) {
+    if (!codes.length) return '<div style="color:var(--muted);font-size:.83rem;">None</div>';
+    return codes.slice(0, 15).map(([code, count], idx) => {
+      const key  = String(code).replace(/^-/, '');
+      const info = ORA_ERRORS[key];
+      const label = `ORA-${key}`;
+      const hasInfo = !!info;
+      return `<div class="fail-item">
+        <div class="fail-row" onclick="toggleFail(this.closest('.fail-item'),${hasInfo})">
+          <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+            <span class="fail-code">${esc(label)}</span>
+            ${info ? `<span style="font-size:.78rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(info.msg)}</span>` : ''}
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+            <span class="fail-count">${fmt(count)}</span>
+            ${hasInfo ? '<span class="fail-chevron">&#9658;</span>' : ''}
+          </div>
+        </div>
+        ${hasInfo ? `<div class="fail-detail">
+          <div class="fail-cause">${esc(info.cause)}</div>
+        </div>` : ''}
+      </div>`;
+    }).join('');
+  }
+
+  function toggleFail(el, hasInfo) {
+    if (!hasInfo) return;
+    el.classList.toggle('open');
+  }
+
+  function renderModalCharts(d, maxProg) {
+    [mChartProg, mChartHour, mChartDate].forEach(c => { if (c) c.destroy(); });
+
+    // Programs bar
+    const progLabels = d.programs.map(p => p[0]);
+    const progConns  = d.programs.map(p => p[1]);
+    const progSucc   = d.programs.map(p => p[2]);
+    const progFail   = d.programs.map(p => p[1] - p[2]);
+    mChartProg = new Chart(document.getElementById('modal-prog-chart').getContext('2d'), {
+      type: 'bar',
+      data: { labels: progLabels, datasets: [
+        { label: 'Success',  data: progSucc, backgroundColor: 'rgba(22,163,74,.85)', stack: 'a' },
+        { label: 'Failures', data: progFail, backgroundColor: 'rgba(220,38,38,.85)', stack: 'a' },
+      ]},
+      options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { x: { stacked: true, beginAtZero: true, ticks: { precision: 0 } },
+                  y: { stacked: true, ticks: { font: { size: 11 },
+                    callback: (v, i) => { const l = progLabels[i]||''; return l.length>28 ? l.substring(0,26)+'…' : l; }
+                  }}}},
+    });
+
+    // Build by_hour_by_date lookup: { 'YYYY-MM-DD': { hour: count } }
+    const hourByDate = {};
+    (d.by_hour_by_date || []).forEach(([date, hour, count]) => {
+      if (!hourByDate[date]) hourByDate[date] = {};
+      hourByDate[date][hour] = count;
+    });
+
+    // Day pills
+    const pillsEl = document.getElementById('modal-day-pills');
+    const allDates = (d.by_date || []).map(r => r[0]);
+    pillsEl.innerHTML = ['all', ...allDates].map(date => `
+      <button onclick="setHourDay('${date}')"
+        id="hpill-${date}"
+        style="padding:2px 9px;border-radius:99px;font-size:.72rem;font-weight:600;cursor:pointer;
+               border:1.5px solid ${date==='all'?'var(--primary)':'var(--border)'};
+               background:${date==='all'?'var(--primary)':'transparent'};
+               color:${date==='all'?'#fff':'var(--muted)'};transition:all .15s;">
+        ${date === 'all' ? 'All days' : date}
+      </button>`).join('');
+
+    // Store lookup on window for the helper function
+    window._modalHourByDate = hourByDate;
+    window._modalHourAll    = d.by_hour;
+
+    // Hour chart renderer (called on pill click too)
+    window.setHourDay = function(date) {
+      // Update pill styles
+      document.querySelectorAll('[id^="hpill-"]').forEach(b => {
+        const isActive = b.id === `hpill-${date}`;
+        b.style.background   = isActive ? 'var(--primary)' : 'transparent';
+        b.style.borderColor  = isActive ? 'var(--primary)' : 'var(--border)';
+        b.style.color        = isActive ? '#fff'           : 'var(--muted)';
+      });
+      document.getElementById('modal-hour-title').textContent =
+        date === 'all' ? 'Activity by Hour (all days)' : `Activity by Hour — ${date}`;
+
+      const map = date === 'all'
+        ? Object.fromEntries((window._modalHourAll || []).map(h => [h[0], h[1]]))
+        : (window._modalHourByDate[date] || {});
+      const data = Array.from({length: 24}, (_, i) => map[i] || 0);
+
+      if (mChartHour) mChartHour.destroy();
+      mChartHour = new Chart(document.getElementById('modal-hour-chart').getContext('2d'), {
+        type: 'bar',
+        data: { labels: Array.from({length:24}, (_, i) => `${String(i).padStart(2,'0')}h`),
+                datasets: [{ label: 'Connections', data,
+                  backgroundColor: date === 'all' ? 'rgba(37,99,235,.75)' : 'rgba(124,58,237,.8)',
+                  borderRadius: 3 }]},
+        options: { responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true, ticks: { precision: 0 } },
+                    x: { ticks: { font: { size: 10 } } } } },
+      });
+    };
+
+    window.setHourDay('all');
+
+    // Date activity
+    mChartDate = new Chart(document.getElementById('modal-date-chart').getContext('2d'), {
+      type: 'line',
+      data: { labels: d.by_date.map(r => r[0]), datasets: [{ label: 'Connections',
+        data: d.by_date.map(r => r[1]), borderColor: '#7C3AED',
+        backgroundColor: 'rgba(124,58,237,.1)', fill: true, tension: 0.3, pointRadius: 4 }]},
+      options: { responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } },
+    });
+  }
+
+  function closeModal() {
+    document.getElementById('ip-modal').classList.remove('open');
+    [mChartProg, mChartHour, mChartDate].forEach(c => { if(c) c.destroy(); });
+    mChartProg = mChartHour = mChartDate = null;
+  }
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      closeModal();
+      if (document.getElementById('warn-overlay').style.display !== 'none') cancelWarn();
+    }
+  });
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  function fmt(n) { return (n ?? 0).toLocaleString(); }
+  function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+  // ── Dark / Light theme ────────────────────────────────────────────────────
+  function _isDark() { return document.documentElement.getAttribute('data-theme') === 'dark'; }
+
+  function _applyChartDefaults() {
+    const dark = _isDark();
+    const textColor = dark ? '#94A3B8' : '#64748B';
+    const gridColor = dark ? 'rgba(255,255,255,.07)' : 'rgba(0,0,0,.07)';
+    Chart.defaults.color       = textColor;
+    Chart.defaults.borderColor = gridColor;
+  }
+
+  function _updateThemeBtn() {
+    const dark = _isDark();
+    document.getElementById('theme-icon').textContent  = dark ? '☀️' : '🌙';
+    document.getElementById('theme-label').textContent = dark ? 'Light' : 'Dark';
+  }
+
+  function toggleTheme() {
+    const dark = !_isDark();
+    document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+    localStorage.setItem('ollda-theme', dark ? 'dark' : 'light');
+    _applyChartDefaults();
+    _updateThemeBtn();
+    // Re-render any active charts so they pick up new colors
+    if (currentView === 'chart' && allRows.length)   renderCharts();
+    if (currentView === 'iptree' && allRows.length)  renderIpTree();
+  }
+
+  // ── Legal disclaimer modal ────────────────────────────────────────────────
+  function acceptLegal() {
+    localStorage.setItem('ollda-legal-accepted', '1');
+    document.getElementById('legal-modal').style.display = 'none';
+  }
+
+  (function() {
+    if (!localStorage.getItem('ollda-legal-accepted')) {
+      const m = document.getElementById('legal-modal');
+      m.style.display = 'flex';
+    }
+  })();
+
+  // Init button state and chart defaults on load
+  _updateThemeBtn();
+  _applyChartDefaults();
+
+  function newFile() {
+    session = null; allHeaders = []; allRows = [];
+    pendingFiles = [];
+    treeExpanded = new Set();
+    treeFailOnly = false;
+    failuresOnly = false;
+    const tBtn = document.getElementById('btn-tree-fail-only');
+    if (tBtn) { tBtn.style.background = 'transparent'; tBtn.style.color = 'var(--danger)'; }
+    const fBtn = document.getElementById('btn-fail-only');
+    if (fBtn) { fBtn.style.background = 'transparent'; fBtn.style.color = 'var(--danger)'; }
+    hideTreeFailCodes();
+    hideFailCodes();
+    if (window._iptreeChart) { window._iptreeChart.destroy(); window._iptreeChart = null; }
+    [chartBar,chartDonut,chartPie,mChartProg,mChartHour,mChartDate].forEach(c => { if(c) c.destroy(); });
+    chartBar=chartDonut=chartPie=mChartProg=mChartHour=mChartDate=null;
+    document.getElementById('file-in').value = '';
+    document.getElementById('bar-fill').classList.remove('done');
+    document.getElementById('search-box').value = '';
+    document.getElementById('staged-area').style.display = 'none';
+    document.getElementById('file-list').innerHTML = '';
+    document.getElementById('warn-overlay').style.display = 'none';
+    _warnSid = _warnFiles = null;
+    setView('table');
+    show('sec-upload');
+  }
+</script>
+
+<footer>
+  <span>Copyright &copy; 2026 &nbsp;·&nbsp; OLLDA &nbsp;·&nbsp;
+    <a onclick="document.getElementById('legal-modal').style.display='flex';return false;"
+       href="#" style="color:rgba(255,255,255,.38);text-decoration:none;transition:color .15s;"
+       onmouseover="this.style.color='rgba(255,255,255,.7)'" onmouseout="this.style.color='rgba(255,255,255,.38)'">
+      Legal Disclaimer
+    </a>
+  </span>
+
+  <div class="foot-center">
+    <!-- Lightning bolt -->
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="#FBBF24" stroke="none">
+      <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+    </svg>
+    <span>Powered by <strong>Claude Code</strong></span>
+  </div>
+
+  <div class="foot-right">
+    <span>Author: <strong>José Valdézio</strong> &nbsp;
+      <a href="https://linktr.ee/jvaldeziodba" target="_blank" rel="noopener"
+         style="color:rgba(255,255,255,.55);font-size:.75rem;text-decoration:none;
+                border:1px solid rgba(255,255,255,.18);border-radius:99px;
+                padding:2px 9px;transition:color .15s,border-color .15s;"
+         onmouseover="this.style.color='#fff';this.style.borderColor='rgba(255,255,255,.5)'"
+         onmouseout="this.style.color='rgba(255,255,255,.55)';this.style.borderColor='rgba(255,255,255,.18)'">
+        linktr.ee/jvaldeziodba
+      </a>
+    </span>
+  </div>
+</footer>
+
+</body>
+</html>
