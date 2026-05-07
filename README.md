@@ -1,6 +1,6 @@
 # OLLDA — Oracle Listener Log Discovery & Analyzer
 
-> Local listener log analyzer for Oracle RAC environments — upload your listener.log and instantly explore connections, IPs, errors and trends.
+> Local listener log analyzer for Oracle environments (including RAC) — upload your listener.log and instantly explore connections, IPs, errors and trends.
 
 **OLLDA** is a lightweight web application that runs entirely on your local machine. No data is sent to any external server. Your listener logs never leave your computer.
 
