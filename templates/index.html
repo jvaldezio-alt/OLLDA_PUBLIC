@@ -1024,9 +1024,9 @@
     pendingFiles = [];
     document.getElementById('staged-area').style.display = 'none';
     document.getElementById('prog-title').textContent = files.length === 1 ? 'Parsing File' : 'Parsing Files';
-    const label = files.length === 1 ? files[0].name : `${files.length} files (RAC merge)`;
-    document.getElementById('prog-filename').textContent = label;
-    document.getElementById('file-label').textContent   = label;
+    const labelPre = files.length === 1 ? files[0].name : `${files.length} files (analyzing...)`;
+    document.getElementById('prog-filename').textContent = labelPre;
+    document.getElementById('file-label').textContent   = labelPre;
     show('sec-progress');
     updateBar(0, 'Uploading...');
     showParseQuote();
@@ -1041,6 +1041,15 @@
 
     if (!resp.ok) { showError('Upload failed'); return; }
     const data = await resp.json();
+
+    // Update label with correct environment type once backend responds
+    if (files.length > 1) {
+      const label = data.is_rac
+        ? `${files.length} files (RAC merge)`
+        : `${files.length} files (merged)`;
+      document.getElementById('prog-filename').textContent = label;
+      document.getElementById('file-label').textContent   = label;
+    }
 
     if (data.warning) {
       // Server detected service differences — show warning dialog

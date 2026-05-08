@@ -543,11 +543,18 @@ def upload():
 
     # Check compatibility — warn but do NOT hard-block
     warning_msg = None
+    is_rac = False
     if len(all_sources) > 1:
         fps = [_fingerprint_source(s) for s in all_sources]
         ok, reason = _compatible_databases(fps)
         if not ok:
             warning_msg = reason
+        # RAC = multiple distinct instance base names across files
+        all_bases = set()
+        for fp in fps:
+            for inst in fp['instances']:
+                all_bases.add(_instance_base(inst))
+        is_rac = len(all_bases) > 1
 
     sid = str(uuid.uuid4())
     fd, dp = tempfile.mkstemp(suffix='.db')
@@ -562,7 +569,7 @@ def upload():
                 file_names=file_names,
                 warning_msg=warning_msg,
             )
-        return jsonify(warning=True, warning_msg=warning_msg, session_id=sid)
+        return jsonify(warning=True, warning_msg=warning_msg, session_id=sid, is_rac=is_rac)
 
     with _LOCK:
         SESSIONS[sid] = dict(status='parsing', parsed=0, lines_done=0,
@@ -570,7 +577,7 @@ def upload():
                              file_names=file_names)
 
     threading.Thread(target=_worker, args=(sid, all_sources, dp), daemon=True).start()
-    return jsonify(session_id=sid, file_count=len(all_sources))
+    return jsonify(session_id=sid, file_count=len(all_sources), is_rac=is_rac)
 
 
 @app.route('/confirm/<sid>', methods=['POST'])
