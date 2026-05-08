@@ -18,22 +18,27 @@
 
 ---
 
-## Requirements
+## Quick Start
 
-- Python **3.9** or higher
-- pip
+### Option 1 — Docker (recommended, no Python required)
+
+```bash
+docker run -p 5000:5000 jvaldeziodba/ollda
+```
+
+Then open **http://localhost:5000** in your browser. That's it.
+
+> **Docker Hub:** [hub.docker.com/r/jvaldeziodba/ollda](https://hub.docker.com/r/jvaldeziodba/ollda)
 
 ---
 
-## Quick Start
-
-### Windows
+### Option 2 — Windows (Python required)
 
 ```bat
 run.bat
 ```
 
-### Linux / macOS
+### Option 2 — Linux / macOS (Python required)
 
 ```bash
 chmod +x run.sh
@@ -47,7 +52,7 @@ Both scripts will:
 
 ---
 
-## Manual Setup (alternative)
+### Option 3 — Manual Setup
 
 ```bash
 # Clone the repository
@@ -67,6 +72,16 @@ python app.py
 ```
 
 Then open your browser at **http://localhost:5000**
+
+---
+
+## Requirements
+
+| Method | Requirements |
+|--------|-------------|
+| Docker | Docker Desktop |
+| run.bat / run.sh | Python 3.9+ |
+| Manual | Python 3.9+, pip |
 
 ---
 
