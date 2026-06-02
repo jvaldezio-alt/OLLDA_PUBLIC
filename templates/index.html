@@ -1414,12 +1414,24 @@
     document.getElementById('row-count').textContent =
       `${fmt(rows.length)} group${rows.length !== 1 ? 's' : ''}` +
       (rows.length < allRows.length ? ' (filtered)' : '');
+
+    const connIdx  = allHeaders.indexOf('Connections');
+    const isIpGroup = allHeaders[0] === 'Client IP';
+    const totalConns = connIdx >= 0
+      ? allRows.reduce((s, r) => s + Number(r[connIdx] ?? 0), 0)
+      : 0;
+    const showPct = connIdx >= 0 && totalConns > 0;
+
     const th = allHeaders.map((h, i) => {
       const num = NUM_HEADERS.has(h);
       let cls = num ? 'num' : '';
       if (i === sortColIdx) cls += sortAsc ? ' sort-asc' : ' sort-desc';
       return `<th class="${cls.trim()}" onclick="sortBy(${i})">${esc(h)}</th>`;
     }).join('');
+    const extraTh = showPct
+      ? `<th class="num" title="Percentage of total connections">% Conn.</th>`
+      : '';
+
     const trs = rows.map(row => {
       const cells = row.map((v, i) => {
         const h = allHeaders[i], num = NUM_HEADERS.has(h);
@@ -1431,12 +1443,25 @@
         }
         if (h === 'Failures' && Number(v) > 0)
           return `<td class="num" style="color:var(--danger)">${d}</td>`;
+        // Clickable IP cell
+        if (i === 0 && isIpGroup) {
+          const ipVal = String(v ?? '');
+          if (/^\d+\.\d+\.\d+\.\d+$/.test(ipVal)) {
+            return `<td title="${esc(ipVal)}" style="cursor:pointer;color:var(--primary);font-weight:600;"
+                       onclick="showIpDetail('${esc(ipVal)}')">${esc(ipVal)}</td>`;
+          }
+        }
         return `<td class="${num?'num':''}" title="${esc(String(v??''))}">${esc(String(d))}</td>`;
       }).join('');
-      return `<tr>${cells}</tr>`;
+      const pct = showPct
+        ? (100 * Number(row[connIdx] ?? 0) / totalConns).toFixed(1)
+        : 0;
+      const extraTd = showPct ? `<td class="num">${pct}%</td>` : '';
+      return `<tr>${cells}${extraTd}</tr>`;
     }).join('');
+
     document.getElementById('table-area').innerHTML =
-      `<table><thead><tr>${th}</tr></thead><tbody>${trs}</tbody></table>`;
+      `<table><thead><tr>${th}${extraTh}</tr></thead><tbody>${trs}</tbody></table>`;
   }
   function sortBy(idx) {
     if (sortColIdx === idx) sortAsc = !sortAsc;

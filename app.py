@@ -3,7 +3,7 @@
 
 import os, re, uuid, json, time, tempfile, threading, sqlite3, gzip, tarfile, shutil
 from datetime import datetime
-from flask import Flask, request, jsonify, render_template, Response, send_file
+from flask import Flask, request, jsonify, render_template, Response, send_file, make_response
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment
 
@@ -777,8 +777,111 @@ def detail(sid):
     return jsonify(result)
 
 
+@app.route('/export-html/<sid>')
+def export_html(sid):
+    with _LOCK:
+        s = SESSIONS.get(sid)
+    if not s or s['status'] != 'ready':
+        return jsonify(error='Session not ready'), 400
+
+    conn = sqlite3.connect(s['db_path'])
+
+    def q(sql, p=()):
+        return [list(r) for r in conn.execute(sql, p).fetchall()]
+
+    # Pre-compute all groupings
+    queries = {}
+    for dim in DIMKEYS:
+        sql, hdr = _build_sql([dim], 5000)
+        rows = conn.execute(sql).fetchall()
+        queries[dim] = {'headers': hdr, 'rows': [list(r) for r in rows]}
+
+    # Multi-dim groupings used in UI
+    for dims in [['client_ip'], ['program'], ['os_user'], ['service_name'],
+                 ['instance_name'], ['date'], ['hour'], ['status_code']]:
+        key = ','.join(dims)
+        if key not in queries:
+            sql, hdr = _build_sql(dims, 5000)
+            rows = conn.execute(sql).fetchall()
+            queries[key] = {'headers': hdr, 'rows': [list(r) for r in rows]}
+
+    # Status codes for fail panel
+    sc_sql, sc_hdr = _build_sql(['status_code'], 200)
+    sc_rows = conn.execute(sc_sql).fetchall()
+    queries['status_code'] = {'headers': sc_hdr, 'rows': [list(r) for r in sc_rows]}
+
+    # IP details for top 500 IPs
+    ip_sql, _ = _build_sql(['client_ip'], 500)
+    top_ips = [r[0] for r in conn.execute(ip_sql).fetchall() if r[0] != '(unknown)']
+    total_all = conn.execute("SELECT COUNT(*) FROM connections").fetchone()[0] or 1
+
+    ip_details = {}
+    for ip in top_ips:
+        basic = conn.execute("""
+            SELECT COUNT(*), COALESCE(SUM(success),0),
+                   COUNT(*)-COALESCE(SUM(success),0),
+                   COUNT(DISTINCT program), COUNT(DISTINCT client_host),
+                   COUNT(DISTINCT os_user), COUNT(DISTINCT service_name),
+                   MIN(timestamp), MAX(timestamp)
+            FROM connections WHERE client_ip = ?
+        """, (ip,)).fetchone()
+        ip_details[ip] = dict(
+            ip=ip,
+            total=basic[0], success=basic[1], failures=basic[2],
+            uniq_programs=basic[3], uniq_hosts=basic[4],
+            uniq_users=basic[5], uniq_services=basic[6],
+            first=basic[7], last=basic[8],
+            pct=round(100 * basic[0] / total_all, 2),
+            programs  = q("SELECT COALESCE(program,'(unknown)'),COUNT(*),COALESCE(SUM(success),0) FROM connections WHERE client_ip=? GROUP BY program ORDER BY COUNT(*) DESC", (ip,)),
+            hosts     = q("SELECT COALESCE(client_host,'(no hostname)'),COUNT(*) FROM connections WHERE client_ip=? GROUP BY client_host ORDER BY COUNT(*) DESC", (ip,)),
+            users     = q("SELECT COALESCE(os_user,'(unknown)'),COUNT(*) FROM connections WHERE client_ip=? GROUP BY os_user ORDER BY COUNT(*) DESC", (ip,)),
+            services  = q("SELECT COALESCE(service_name,'(unknown)'),COUNT(*) FROM connections WHERE client_ip=? GROUP BY service_name ORDER BY COUNT(*) DESC", (ip,)),
+            by_hour   = q("SELECT hour,COUNT(*) FROM connections WHERE client_ip=? GROUP BY hour ORDER BY hour", (ip,)),
+            by_date   = q("SELECT date,COUNT(*) FROM connections WHERE client_ip=? GROUP BY date ORDER BY date", (ip,)),
+            fail_codes= q("SELECT status_code,COUNT(*) FROM connections WHERE client_ip=? AND success=0 GROUP BY status_code ORDER BY COUNT(*) DESC", (ip,)),
+            by_hour_by_date = q("SELECT date,hour,COUNT(*) FROM connections WHERE client_ip=? GROUP BY date,hour ORDER BY date,hour", (ip,)),
+        )
+    conn.close()
+
+    summary = {}
+    conn2 = sqlite3.connect(s['db_path'])
+    summary = _summary(conn2)
+    conn2.close()
+
+    report_data = {
+        'files'       : s.get('file_names', []),
+        'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'summary'     : summary,
+        'queries'     : queries,
+        'ip_details'  : ip_details,
+    }
+
+    data_script = f'<script>window.__REPORT__ = {json.dumps(report_data, default=str)};</script>'
+
+    html = render_template('index.html')
+
+    # Inline Chart.js so the report works 100% offline (no CDN dependency)
+    chartjs_path = os.path.join(app.static_folder, 'chart.umd.min.js')
+    try:
+        with open(chartjs_path, 'r', encoding='utf-8') as f:
+            chartjs_content = f.read()
+        cdn_tag = '<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>'
+        html = html.replace(cdn_tag, f'<script>{chartjs_content}</script>', 1)
+    except Exception:
+        pass  # fallback: keep CDN tag if file not found
+
+    html = html.replace('</head>', data_script + '\n</head>', 1)
+
+    filename = 'OLLDA_report_{}.html'.format(
+        datetime.now().strftime('%Y%m%d_%H%M%S'))
+    resp = make_response(html)
+    resp.headers['Content-Type'] = 'text/html; charset=utf-8'
+    resp.headers['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return resp
+
+
 if __name__ == '__main__':
     debug = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
-    host  = os.environ.get('FLASK_HOST', '0.0.0.0')
+    host  = os.environ.get('FLASK_HOST', '127.0.0.1')
     port  = int(os.environ.get('FLASK_PORT', '5000'))
     app.run(debug=debug, host=host, port=port, threaded=True)
