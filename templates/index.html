@@ -564,6 +564,15 @@
         </svg>
         Export to Excel
       </button>
+      <button id="btn-download-report" class="btn" onclick="downloadReport()"
+              style="display:none;background:var(--primary);color:#fff;gap:6px;">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 18 15 15"/>
+        </svg>
+        Download Report
+      </button>
       <span class="row-count" id="row-count"></span>
     </div>
 
@@ -849,6 +858,9 @@
     '28040': { msg: 'No matching authentication protocol',                                   cause: 'Client and server cannot agree on an authentication method. Check SQLNET.ALLOWED_LOGON_VERSION settings.' },
   };
 
+  // ── Report mode (offline HTML export) ────────────────────────────────────
+  const REPORT_MODE = typeof window.__REPORT__ !== 'undefined';
+
   // ── State ─────────────────────────────────────────────────────────────────
   let session = null, currentGroupBy = ['client_ip'];
   let allHeaders = [], allRows = [];
@@ -1116,6 +1128,9 @@
     document.getElementById('period-badge').textContent =
       'Collection interval:  ' + (sm.first||'').substring(0,10) + '  →  ' + (sm.last||'').substring(0,10);
     show('sec-analysis');
+    if (!REPORT_MODE) {
+      document.getElementById('btn-download-report').style.display = 'flex';
+    }
     setGroupBy(['client_ip']);
     loadConnectionMap();
   }
@@ -1321,9 +1336,14 @@
     const list  = document.getElementById('iptree-fail-list');
     panel.style.display = '';
     list.innerHTML = '<div class="table-loading"><span class="spinner"></span>Loading...</div>';
-    const res = await fetch(`/query/${session}?g=status_code&limit=200`);
-    if (!res.ok) { list.innerHTML = '<div style="color:var(--muted)">Error loading codes.</div>'; return; }
-    const data = await res.json();
+    let data;
+    if (REPORT_MODE) {
+      data = window.__REPORT__.queries['status_code'];
+    } else {
+      const res = await fetch(`/query/${session}?g=status_code&limit=200`);
+      if (!res.ok) { list.innerHTML = '<div style="color:var(--muted)">Error loading codes.</div>'; return; }
+      data = await res.json();
+    }
     const scIdx   = data.headers.indexOf('Status Code');
     const failIdx = data.headers.indexOf('Failures');
     const codes = data.rows
@@ -1385,10 +1405,18 @@
     document.getElementById('table-area').innerHTML =
       '<div class="table-loading"><span class="spinner"></span>Loading...</div>';
     document.getElementById('row-count').textContent = '';
-    const params = currentGroupBy.map(g => `g=${g}`).join('&');
-    const res = await fetch(`/query/${session}?${params}&limit=5000`);
-    if (!res.ok) { document.getElementById('table-area').innerHTML = '<div class="table-loading">Error.</div>'; return; }
-    const data = await res.json();
+
+    let data;
+    if (REPORT_MODE) {
+      const key = currentGroupBy[0];
+      data = window.__REPORT__.queries[key] || window.__REPORT__.queries['client_ip'];
+    } else {
+      const params = currentGroupBy.map(g => `g=${g}`).join('&');
+      const res = await fetch(`/query/${session}?${params}&limit=5000`);
+      if (!res.ok) { document.getElementById('table-area').innerHTML = '<div class="table-loading">Error.</div>'; return; }
+      data = await res.json();
+    }
+
     allHeaders = data.headers; allRows = data.rows;
     sortColIdx = allHeaders.indexOf('Connections'); sortAsc = false;
     filterText = document.getElementById('search-box').value;
@@ -1495,9 +1523,14 @@
     panel.style.display = '';
     list.innerHTML = '<div class="table-loading"><span class="spinner"></span>Loading...</div>';
 
-    const res = await fetch(`/query/${session}?g=status_code&limit=200`);
-    if (!res.ok) { list.innerHTML = '<div style="color:var(--muted)">Error loading codes.</div>'; return; }
-    const data = await res.json();
+    let data;
+    if (REPORT_MODE) {
+      data = window.__REPORT__.queries['status_code'];
+    } else {
+      const res = await fetch(`/query/${session}?g=status_code&limit=200`);
+      if (!res.ok) { list.innerHTML = '<div style="color:var(--muted)">Error loading codes.</div>'; return; }
+      data = await res.json();
+    }
 
     // headers: ['Status Code','Connections','Success','Failures','% Success',...]
     const scIdx   = data.headers.indexOf('Status Code');
@@ -1619,9 +1652,28 @@
   async function loadConnectionMap() {
     const grid = document.getElementById('ip-map-grid');
     grid.innerHTML = '<div class="table-loading"><span class="spinner"></span>Building map...</div>';
-    const res = await fetch(`/ipmap/${session}`);
-    if (!res.ok) { grid.innerHTML = '<div class="table-loading">Error loading map.</div>'; return; }
-    const data = await res.json();
+
+    let data;
+    if (REPORT_MODE) {
+      // Build map data from pre-embedded ip_details
+      const details = window.__REPORT__.ip_details;
+      const totalAll = Object.values(details).reduce((s, d) => s + (d.total||0), 0) || 1;
+      const ips = Object.values(details)
+        .sort((a, b) => b.total - a.total)
+        .map(d => ({
+          ip: d.ip,
+          connections: d.total,
+          pct: +(100 * d.total / totalAll).toFixed(2),
+          host: d.hosts?.[0]?.[0] !== '(no hostname)' ? d.hosts?.[0]?.[0] : null,
+          success: d.success,
+          failures: d.failures,
+        }));
+      data = { ips };
+    } else {
+      const res = await fetch(`/ipmap/${session}`);
+      if (!res.ok) { grid.innerHTML = '<div class="table-loading">Error loading map.</div>'; return; }
+      data = await res.json();
+    }
     if (!data.ips?.length) { grid.innerHTML = '<div class="table-loading">No IP data.</div>'; return; }
 
     document.getElementById('map-count').textContent = `${data.ips.length} IPs`;
@@ -1673,9 +1725,20 @@
 
   // ── IP Detail Modal ───────────────────────────────────────────────────────
   async function showIpDetail(ip) {
-    const res = await fetch(`/detail/${session}?ip=${encodeURIComponent(ip)}`);
-    if (!res.ok) return;
-    const d = await res.json();
+    let d;
+    if (REPORT_MODE) {
+      d = window.__REPORT__.ip_details[ip];
+      if (!d) { alert('Detail not available for this IP in the report.'); return; }
+    } else {
+      const res = await fetch(`/detail/${session}?ip=${encodeURIComponent(ip)}`);
+      if (!res.ok) return;
+      d = await res.json();
+    }
+    showIpDetailData(d);
+  }
+
+  function showIpDetailData(d) {
+    const ip = d.ip;
 
     document.getElementById('modal-title').textContent = ip;
     const hosts = d.hosts.map(h => h[0]).filter(h => h !== '(no hostname)').join(', ');
@@ -1906,6 +1969,78 @@
       m.style.display = 'flex';
     }
   })();
+
+  // ── Download Report button ────────────────────────────────────────────────
+  async function downloadReport() {
+    const btn = document.getElementById('btn-download-report');
+    btn.disabled = true;
+    const origHtml = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner" style="width:14px;height:14px;border-width:2px;"></span> Generating...';
+    try {
+      const res = await fetch(`/export-html/${session}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert('Error generating report: ' + (err.error || 'HTTP ' + res.status));
+        return;
+      }
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      const now  = new Date();
+      const pad  = n => String(n).padStart(2,'0');
+      a.href     = url;
+      a.download = `OLLDA_report_${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.html`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch(e) {
+      alert('Error generating report: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = origHtml;
+    }
+  }
+
+  // ── Report mode bootstrap ─────────────────────────────────────────────────
+  if (REPORT_MODE) {
+    // Hide upload/progress UI, show analysis section immediately
+    // Show analysis section, hide everything else
+    document.querySelectorAll('.section').forEach(el => el.classList.remove('active'));
+    document.getElementById('sec-analysis').classList.add('active');
+
+    // Populate summary KPIs from report data
+    const R = window.__REPORT__;
+    const sm = R.summary;
+    document.getElementById('st-total').textContent   = fmt(sm.total   || 0);
+    document.getElementById('st-success').textContent = fmt(sm.success || 0);
+    document.getElementById('st-fail').textContent    = fmt(sm.failures|| 0);
+    document.getElementById('st-ips').textContent     = fmt(sm.uniq_ips|| 0);
+    document.getElementById('st-prog').textContent    = fmt(sm.uniq_prog||0);
+    document.getElementById('st-svc').textContent     = fmt(sm.uniq_svc|| 0);
+    document.getElementById('st-host').textContent    = fmt(sm.uniq_host||0);
+    document.getElementById('st-user').textContent    = fmt(sm.uniq_user||0);
+    document.getElementById('period-badge').textContent =
+      'Collection interval:  ' + (sm.first||'').substring(0,10) + '  →  ' + (sm.last||'').substring(0,10);
+    document.getElementById('file-label').textContent = R.files.join(', ') || 'OLLDA Report';
+
+    // Report banner
+    const banner = document.createElement('div');
+    banner.style.cssText = 'background:rgba(37,99,235,.12);border:1px solid rgba(37,99,235,.3);border-radius:10px;padding:10px 16px;margin-bottom:16px;font-size:.82rem;color:var(--text);display:flex;align-items:center;gap:10px;flex-wrap:wrap;';
+    banner.innerHTML = `
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      <span><strong>OFFLINE REPORT</strong> &nbsp;·&nbsp; Generated: ${R.generated_at} &nbsp;·&nbsp; Files: ${R.files.join(', ')}</span>`;
+    document.querySelector('.analysis-wrap').prepend(banner);
+
+    // Hide Connection Map — not available in offline report
+    const mapSec = document.querySelector('.map-section');
+    if (mapSec) mapSec.style.display = 'none';
+
+    // Load initial data
+    session = '__report__';
+    currentGroupBy = ['client_ip'];
+    loadTable();
+  }
 
   // Init button state and chart defaults on load
   _updateThemeBtn();
