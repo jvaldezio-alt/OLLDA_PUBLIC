@@ -1977,7 +1977,7 @@
     const origHtml = btn.innerHTML;
     btn.innerHTML = '<span class="spinner" style="width:14px;height:14px;border-width:2px;"></span> Generating...';
     try {
-      const res = await fetch(`/export-html/${session}`);
+      const res = await fetch(`export-html/${session}`);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         alert('Error generating report: ' + (err.error || 'HTTP ' + res.status));
