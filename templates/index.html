@@ -600,6 +600,28 @@
             Failures only
           </button>
         </div>
+        <!-- Failures drill-down breadcrumb (visible only in drill mode) -->
+        <div id="drill-nav" style="display:none;align-items:center;gap:6px;margin-bottom:10px;flex-wrap:wrap;">
+          <button onclick="loadDrillDown('date')" id="drill-btn-root"
+            style="padding:3px 12px;border-radius:99px;font-size:.78rem;font-weight:600;cursor:pointer;
+                   border:1.5px solid var(--danger);background:var(--danger);color:#fff;transition:all .15s;">
+            Failures by Day
+          </button>
+          <span id="drill-crumb-date" style="display:none;align-items:center;gap:6px;">
+            <span style="color:var(--muted);font-size:1rem;line-height:1;">›</span>
+            <button id="drill-btn-date" onclick="loadDrillDown('hour', drillDate)"
+              style="padding:3px 12px;border-radius:99px;font-size:.78rem;font-weight:600;cursor:pointer;
+                     border:1.5px solid var(--border);background:transparent;color:var(--text);transition:all .15s;"></button>
+          </span>
+          <span id="drill-crumb-hour" style="display:none;align-items:center;gap:6px;">
+            <span style="color:var(--muted);font-size:1rem;line-height:1;">›</span>
+            <button id="drill-lbl-hour"
+              style="padding:3px 12px;border-radius:99px;font-size:.78rem;font-weight:600;cursor:default;
+                     border:1.5px solid var(--border);background:var(--surface);color:var(--text);">
+            </button>
+          </span>
+        </div>
+
         <div class="chart-wrap" id="bar-wrap" style="height:420px;">
           <canvas id="chart-bar"></canvas>
         </div>
@@ -772,12 +794,12 @@
         <div style="position:relative;height:220px;"><canvas id="modal-prog-chart"></canvas></div>
       </div>
       <!-- Services — full width -->
-      <div class="modal-section">
+      <div class="modal-section" id="modal-svc-section">
         <div class="modal-section-title">Services</div>
         <div class="mini-list" id="modal-svc-list"></div>
       </div>
       <!-- OS Users + Hostnames — two columns -->
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+      <div id="modal-user-host-section" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
         <div class="modal-section">
           <div class="modal-section-title">OS Users</div>
           <div class="mini-list" id="modal-user-list"></div>
@@ -868,6 +890,8 @@
   let currentView = 'table', failuresOnly = false;
   let treeExpanded = new Set(), treeFailOnly = false;
   let chartBar = null, chartDonut = null, chartPie = null;
+  // Failures drill-down state
+  let drillActive = false, drillLevel = 'date', drillDate = null, drillHour = -1;
   let mChartProg = null, mChartHour = null, mChartDate = null;
 
   const NUM_HEADERS = new Set([
@@ -1509,8 +1533,169 @@
     const btn = document.getElementById('btn-fail-only');
     btn.style.background = failuresOnly ? 'var(--danger)' : 'transparent';
     btn.style.color      = failuresOnly ? '#fff'          : 'var(--danger)';
-    renderCharts();
-    if (failuresOnly) loadFailCodes(); else hideFailCodes();
+    if (failuresOnly) {
+      loadDrillDown('date');
+      loadFailCodes();
+    } else {
+      _exitDrill();
+      renderCharts();
+      hideFailCodes();
+    }
+  }
+
+  function _exitDrill() {
+    drillActive = false; drillLevel = 'date'; drillDate = null; drillHour = -1;
+    document.getElementById('drill-nav').style.display = 'none';
+    document.getElementById('drill-crumb-date').style.display = 'none';
+    document.getElementById('drill-crumb-hour').style.display = 'none';
+  }
+
+  async function loadDrillDown(level, date, hour) {
+    if (!session) return;
+    drillActive = true; drillLevel = level;
+    drillDate = date || null; drillHour = (hour !== undefined && hour !== null) ? Number(hour) : -1;
+
+    // Update breadcrumb visibility
+    const nav = document.getElementById('drill-nav');
+    const crumbDate = document.getElementById('drill-crumb-date');
+    const crumbHour = document.getElementById('drill-crumb-hour');
+    nav.style.display = 'flex';
+
+    if (level === 'date') {
+      crumbDate.style.display = 'none';
+      crumbHour.style.display = 'none';
+    } else if (level === 'hour') {
+      document.getElementById('drill-btn-date').textContent = drillDate;
+      crumbDate.style.display = 'inline-flex';
+      crumbHour.style.display = 'none';
+    } else {
+      document.getElementById('drill-btn-date').textContent = drillDate;
+      crumbDate.style.display = 'inline-flex';
+      document.getElementById('drill-lbl-hour').textContent =
+        String(drillHour).padStart(2,'0') + 'h — by IP';
+      crumbHour.style.display = 'inline-flex';
+    }
+
+    const params = new URLSearchParams({ level });
+    if (drillDate) params.set('date', drillDate);
+    if (drillHour >= 0) params.set('hour', drillHour);
+
+    const res = await fetch(`failures_drilldown/${session}?${params}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    _renderDrillChart(data);
+  }
+
+  // Stores full IP data for "show all" toggle
+  let _drillIpFull = null;
+
+  function _renderDrillChart(data, showAllIps = false) {
+    const { level } = data;
+    let { labels, failures } = data;
+
+    // For IP level: cap at 10 by default, store full list for "show all"
+    if (level === 'ip') {
+      _drillIpFull = { labels, failures, level: data.level, date: data.date, hour: data.hour }; // always save the full set
+      if (!showAllIps && labels.length > 10) {
+        labels   = labels.slice(0, 10);
+        failures = failures.slice(0, 10);
+      }
+    }
+
+    // Vertical bars for date/hour, horizontal for IP
+    const isHoriz = level === 'ip';
+    const h = isHoriz
+      ? Math.max(300, labels.length * 36)
+      : 300;
+    document.getElementById('bar-wrap').style.height = h + 'px';
+
+    const titleMap = {
+      date: `Failures by Day (${labels.length} day${labels.length !== 1 ? 's' : ''})`,
+      hour: `Failures by Hour — ${data.date}`,
+      ip:   `Failures by IP — ${data.date} ${String(data.hour).padStart(2,'0')}h`,
+    };
+    document.getElementById('chart-bar-title').textContent = titleMap[level] || '';
+
+    if (chartBar) { chartBar.destroy(); chartBar = null; }
+    const ctx = document.getElementById('chart-bar').getContext('2d');
+
+    chartBar = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{ label: 'Failures', data: failures,
+          backgroundColor: 'rgba(220,38,38,.82)', borderRadius: 3 }],
+      },
+      options: {
+        indexAxis: isHoriz ? 'y' : 'x',
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: isHoriz
+          ? { // IP: horizontal — IPs on Y, count on X
+              x: { beginAtZero: true, ticks: { precision: 0 } },
+              y: { ticks: { font: { size: 11 },
+                callback: (v, i) => { const l = labels[i]||''; return l.length > 30 ? l.substring(0,28)+'…' : l; }
+              }},
+            }
+          : { // Date/Hour: vertical — labels on X, count on Y
+              x: { ticks: { font: { size: 11 },
+                callback: (v, i) => { const l = labels[i]||''; return l.length > 10 ? l.substring(0,9)+'…' : l; }
+              }},
+              y: { beginAtZero: true, ticks: { precision: 0 } },
+            },
+        onClick: (evt, elements) => {
+          if (!elements.length) return;
+          const idx = elements[0].index;
+          if (level === 'date') {
+            loadDrillDown('hour', labels[idx]);
+          } else if (level === 'hour') {
+            loadDrillDown('ip', drillDate, idx); // idx === hour number (array fills all 24)
+          } else if (level === 'ip') {
+            const ip = labels[idx];
+            if (/^\d+\.\d+\.\d+\.\d+$/.test(ip)) showIpDetailFromDrill(ip);
+          }
+        },
+        onHover: (evt, elements) => {
+          evt.native.target.style.cursor = elements.length ? 'pointer' : 'default';
+        },
+      },
+    });
+
+    // Show all / Show top 10 button for IP level
+    let showAllBtn = document.getElementById('drill-show-all-btn');
+    if (level === 'ip' && _drillIpFull && _drillIpFull.labels.length > 10) {
+      if (!showAllBtn) {
+        showAllBtn = document.createElement('button');
+        showAllBtn.id = 'drill-show-all-btn';
+        showAllBtn.style.cssText = 'margin:10px auto 0;display:block;background:rgba(220,38,38,.15);border:1px solid rgba(220,38,38,.5);color:#f87171;border-radius:6px;padding:6px 18px;cursor:pointer;font-size:.85rem;';
+        document.getElementById('bar-wrap').insertAdjacentElement('afterend', showAllBtn);
+      }
+      if (showAllIps) {
+        showAllBtn.textContent = `Show top 10`;
+        showAllBtn.onclick = () => _renderDrillChart(_drillIpFull, false);
+      } else {
+        showAllBtn.textContent = `Show all (${_drillIpFull.labels.length})`;
+        showAllBtn.onclick = () => _renderDrillChart(_drillIpFull, true);
+      }
+      showAllBtn.style.display = 'block';
+    } else if (showAllBtn) {
+      showAllBtn.style.display = 'none';
+    }
+  }
+
+  // Open IP modal in failures-only mode (called from drill-down level 3)
+  async function showIpDetailFromDrill(ip) {
+    let d;
+    if (REPORT_MODE) {
+      d = window.__REPORT__.ip_details[ip];
+      if (!d) { alert('Detail not available for this IP in the report.'); return; }
+    } else {
+      const res = await fetch(`detail/${session}?ip=${encodeURIComponent(ip)}`);
+      if (!res.ok) return;
+      d = await res.json();
+    }
+    showIpDetailData(d, true); // true = failures-only mode
   }
 
   function hideFailCodes() {
@@ -1548,6 +1733,7 @@
 
   // ── Charts ────────────────────────────────────────────────────────────────
   function renderCharts() {
+    if (drillActive) { loadDrillDown(drillLevel, drillDate, drillHour >= 0 ? drillHour : undefined); return; }
     const connIdx = allHeaders.indexOf('Connections');
     const succIdx = allHeaders.indexOf('Success');
     const failIdx = allHeaders.indexOf('Failures');
@@ -1737,7 +1923,7 @@
     showIpDetailData(d);
   }
 
-  function showIpDetailData(d) {
+  function showIpDetailData(d, failMode = false) {
     const ip = d.ip;
 
     document.getElementById('modal-title').textContent = ip;
@@ -1763,6 +1949,11 @@
     document.getElementById('modal-user-list').innerHTML = miniList(d.users, 6);
     document.getElementById('modal-host-list').innerHTML = miniList(d.hosts, 4);
 
+    // In fail mode, hide Services / OS Users / Hostnames sections
+    const hide = failMode ? 'none' : '';
+    document.getElementById('modal-svc-section').style.display = hide;
+    document.getElementById('modal-user-host-section').style.display = failMode ? 'none' : 'grid';
+
     // Failures
     if (d.fail_codes?.length) {
       document.getElementById('modal-fail-section').style.display = '';
@@ -1775,7 +1966,7 @@
 
     // Charts — after modal is visible
     setTimeout(() => {
-      renderModalCharts(d, maxProg);
+      renderModalCharts(d, maxProg, failMode);
     }, 30);
   }
 
@@ -1822,76 +2013,96 @@
     el.classList.toggle('open');
   }
 
-  function renderModalCharts(d, maxProg) {
+  function renderModalCharts(d, maxProg, failMode = false) {
     [mChartProg, mChartHour, mChartDate].forEach(c => { if (c) c.destroy(); });
 
     // Programs bar
-    const progLabels = d.programs.map(p => p[0]);
-    const progConns  = d.programs.map(p => p[1]);
-    const progSucc   = d.programs.map(p => p[2]);
-    const progFail   = d.programs.map(p => p[1] - p[2]);
-    mChartProg = new Chart(document.getElementById('modal-prog-chart').getContext('2d'), {
-      type: 'bar',
-      data: { labels: progLabels, datasets: [
+    let progLabels, progDatasets;
+    if (failMode) {
+      // Failures-only mode: filter programs with failures > 0, sorted desc
+      const failEntries = d.programs
+        .map(p => [p[0], p[1] - p[2]])
+        .filter(([, f]) => f > 0)
+        .sort((a, b) => b[1] - a[1]);
+      progLabels   = failEntries.map(e => e[0]);
+      progDatasets = [{ label: 'Failures', data: failEntries.map(e => e[1]), backgroundColor: 'rgba(220,38,38,.85)' }];
+    } else {
+      progLabels   = d.programs.map(p => p[0]);
+      const progSucc = d.programs.map(p => p[2]);
+      const progFail = d.programs.map(p => p[1] - p[2]);
+      progDatasets = [
         { label: 'Success',  data: progSucc, backgroundColor: 'rgba(22,163,74,.85)', stack: 'a' },
         { label: 'Failures', data: progFail, backgroundColor: 'rgba(220,38,38,.85)', stack: 'a' },
-      ]},
+      ];
+    }
+    mChartProg = new Chart(document.getElementById('modal-prog-chart').getContext('2d'), {
+      type: 'bar',
+      data: { labels: progLabels, datasets: progDatasets },
       options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false,
         plugins: { legend: { display: false } },
-        scales: { x: { stacked: true, beginAtZero: true, ticks: { precision: 0 } },
-                  y: { stacked: true, ticks: { font: { size: 11 },
+        scales: { x: { stacked: !failMode, beginAtZero: true, ticks: { precision: 0 } },
+                  y: { stacked: !failMode, ticks: { font: { size: 11 },
                     callback: (v, i) => { const l = progLabels[i]||''; return l.length>28 ? l.substring(0,26)+'…' : l; }
                   }}}},
     });
 
-    // Build by_hour_by_date lookup: { 'YYYY-MM-DD': { hour: count } }
+    // Build by_hour_by_date lookup — use failures variant when failMode is active
     const hourByDate = {};
-    (d.by_hour_by_date || []).forEach(([date, hour, count]) => {
+    const hbdSource = failMode && d.by_hour_by_date_failures
+      ? d.by_hour_by_date_failures
+      : (d.by_hour_by_date || []);
+    hbdSource.forEach(([date, hour, count]) => {
       if (!hourByDate[date]) hourByDate[date] = {};
       hourByDate[date][hour] = count;
     });
 
-    // Day pills
+    // Day pills — use failures dates when failMode
     const pillsEl = document.getElementById('modal-day-pills');
-    const allDates = (d.by_date || []).map(r => r[0]);
+    const byDateSource = failMode && d.by_date_failures ? d.by_date_failures : (d.by_date || []);
+    const allDates = byDateSource.map(r => r[0]);
+    const accentColor = failMode ? 'var(--danger)' : 'var(--primary)';
     pillsEl.innerHTML = ['all', ...allDates].map(date => `
       <button onclick="setHourDay('${date}')"
         id="hpill-${date}"
         style="padding:2px 9px;border-radius:99px;font-size:.72rem;font-weight:600;cursor:pointer;
-               border:1.5px solid ${date==='all'?'var(--primary)':'var(--border)'};
-               background:${date==='all'?'var(--primary)':'transparent'};
+               border:1.5px solid ${date==='all'?accentColor:'var(--border)'};
+               background:${date==='all'?accentColor:'transparent'};
                color:${date==='all'?'#fff':'var(--muted)'};transition:all .15s;">
         ${date === 'all' ? 'All days' : date}
       </button>`).join('');
 
     // Store lookup on window for the helper function
+    const byHourSource = failMode && d.by_hour_failures ? d.by_hour_failures : (d.by_hour || []);
     window._modalHourByDate = hourByDate;
-    window._modalHourAll    = d.by_hour;
+    window._modalHourAll    = byHourSource;
+    window._modalFailMode   = failMode;
 
     // Hour chart renderer (called on pill click too)
     window.setHourDay = function(date) {
-      // Update pill styles
       document.querySelectorAll('[id^="hpill-"]').forEach(b => {
         const isActive = b.id === `hpill-${date}`;
-        b.style.background   = isActive ? 'var(--primary)' : 'transparent';
-        b.style.borderColor  = isActive ? 'var(--primary)' : 'var(--border)';
-        b.style.color        = isActive ? '#fff'           : 'var(--muted)';
+        b.style.background  = isActive ? accentColor : 'transparent';
+        b.style.borderColor = isActive ? accentColor : 'var(--border)';
+        b.style.color       = isActive ? '#fff'      : 'var(--muted)';
       });
-      document.getElementById('modal-hour-title').textContent =
-        date === 'all' ? 'Activity by Hour (all days)' : `Activity by Hour — ${date}`;
+      const fm = window._modalFailMode;
+      document.getElementById('modal-hour-title').textContent = fm
+        ? (date === 'all' ? 'Failures by Hour (all days)' : `Failures by Hour — ${date}`)
+        : (date === 'all' ? 'Activity by Hour (all days)' : `Activity by Hour — ${date}`);
 
       const map = date === 'all'
         ? Object.fromEntries((window._modalHourAll || []).map(h => [h[0], h[1]]))
         : (window._modalHourByDate[date] || {});
-      const data = Array.from({length: 24}, (_, i) => map[i] || 0);
+      const chartData = Array.from({length: 24}, (_, i) => map[i] || 0);
+      const barColor  = fm ? 'rgba(220,38,38,.82)'
+                           : date === 'all' ? 'rgba(37,99,235,.75)' : 'rgba(124,58,237,.8)';
 
       if (mChartHour) mChartHour.destroy();
       mChartHour = new Chart(document.getElementById('modal-hour-chart').getContext('2d'), {
         type: 'bar',
         data: { labels: Array.from({length:24}, (_, i) => `${String(i).padStart(2,'0')}h`),
-                datasets: [{ label: 'Connections', data,
-                  backgroundColor: date === 'all' ? 'rgba(37,99,235,.75)' : 'rgba(124,58,237,.8)',
-                  borderRadius: 3 }]},
+                datasets: [{ label: fm ? 'Failures' : 'Connections', data: chartData,
+                  backgroundColor: barColor, borderRadius: 3 }]},
         options: { responsive: true, maintainAspectRatio: false,
           plugins: { legend: { display: false } },
           scales: { y: { beginAtZero: true, ticks: { precision: 0 } },
@@ -1901,12 +2112,15 @@
 
     window.setHourDay('all');
 
-    // Date activity
+    // Date activity — use failures data when failMode
+    const dateSource = failMode && d.by_date_failures ? d.by_date_failures : (d.by_date || []);
+    const dateColor  = failMode ? { border: '#DC2626', bg: 'rgba(220,38,38,.1)' }
+                                : { border: '#7C3AED', bg: 'rgba(124,58,237,.1)' };
     mChartDate = new Chart(document.getElementById('modal-date-chart').getContext('2d'), {
       type: 'line',
-      data: { labels: d.by_date.map(r => r[0]), datasets: [{ label: 'Connections',
-        data: d.by_date.map(r => r[1]), borderColor: '#7C3AED',
-        backgroundColor: 'rgba(124,58,237,.1)', fill: true, tension: 0.3, pointRadius: 4 }]},
+      data: { labels: dateSource.map(r => r[0]), datasets: [{ label: failMode ? 'Failures' : 'Connections',
+        data: dateSource.map(r => r[1]), borderColor: dateColor.border,
+        backgroundColor: dateColor.bg, fill: true, tension: 0.3, pointRadius: 4 }]},
       options: { responsive: true, maintainAspectRatio: false,
         plugins: { legend: { display: false } },
         scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } },
@@ -2052,6 +2266,7 @@
     treeExpanded = new Set();
     treeFailOnly = false;
     failuresOnly = false;
+    _exitDrill();
     const tBtn = document.getElementById('btn-tree-fail-only');
     if (tBtn) { tBtn.style.background = 'transparent'; tBtn.style.color = 'var(--danger)'; }
     const fBtn = document.getElementById('btn-fail-only');

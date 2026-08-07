@@ -771,8 +771,67 @@ def detail(sid):
         by_hour   = q("SELECT hour,COUNT(*) FROM connections WHERE client_ip=? GROUP BY hour ORDER BY hour", (ip,)),
         by_date   = q("SELECT date,COUNT(*) FROM connections WHERE client_ip=? GROUP BY date ORDER BY date", (ip,)),
         fail_codes= q("SELECT status_code,COUNT(*) FROM connections WHERE client_ip=? AND success=0 GROUP BY status_code ORDER BY COUNT(*) DESC", (ip,)),
-        by_hour_by_date = q("SELECT date,hour,COUNT(*) FROM connections WHERE client_ip=? GROUP BY date,hour ORDER BY date,hour", (ip,)),
+        by_hour_by_date   = q("SELECT date,hour,COUNT(*) FROM connections WHERE client_ip=? GROUP BY date,hour ORDER BY date,hour", (ip,)),
+        by_hour_failures  = q("SELECT hour,COUNT(*) FROM connections WHERE client_ip=? AND success=0 GROUP BY hour ORDER BY hour", (ip,)),
+        by_date_failures  = q("SELECT date,COUNT(*) FROM connections WHERE client_ip=? AND success=0 GROUP BY date ORDER BY date", (ip,)),
+        by_hour_by_date_failures = q("SELECT date,hour,COUNT(*) FROM connections WHERE client_ip=? AND success=0 GROUP BY date,hour ORDER BY date,hour", (ip,)),
     )
+    conn.close()
+    return jsonify(result)
+
+
+@app.route('/failures_drilldown/<sid>')
+def failures_drilldown(sid):
+    with _LOCK:
+        s = SESSIONS.get(sid)
+    if not s or s['status'] != 'ready':
+        return jsonify(error='Not ready'), 400
+
+    level = request.args.get('level', 'date')   # date | hour | ip
+    date  = request.args.get('date', None)
+    try:
+        hour = int(request.args.get('hour', -1))
+    except (ValueError, TypeError):
+        hour = -1
+
+    conn = sqlite3.connect(s['db_path'])
+
+    if level == 'date':
+        rows = conn.execute(
+            "SELECT date, COUNT(*)-COALESCE(SUM(success),0) AS failures "
+            "FROM connections WHERE success=0 GROUP BY date ORDER BY date"
+        ).fetchall()
+        result = {'level': 'date', 'labels': [r[0] for r in rows], 'failures': [r[1] for r in rows]}
+
+    elif level == 'hour' and date:
+        rows = conn.execute(
+            "SELECT hour, COUNT(*)-COALESCE(SUM(success),0) AS failures "
+            "FROM connections WHERE success=0 AND date=? GROUP BY hour ORDER BY hour",
+            (date,)
+        ).fetchall()
+        # fill all 24 hours so the axis is complete
+        hour_map = {r[0]: r[1] for r in rows}
+        result = {
+            'level': 'hour', 'date': date,
+            'labels': [f'{h:02d}h' for h in range(24)],
+            'failures': [hour_map.get(h, 0) for h in range(24)],
+        }
+
+    elif level == 'ip' and date and hour >= 0:
+        rows = conn.execute(
+            "SELECT COALESCE(client_ip,'(unknown)'), COUNT(*)-COALESCE(SUM(success),0) AS failures "
+            "FROM connections WHERE success=0 AND date=? AND hour=? "
+            "GROUP BY client_ip ORDER BY failures DESC LIMIT 50",
+            (date, hour)
+        ).fetchall()
+        result = {
+            'level': 'ip', 'date': date, 'hour': hour,
+            'labels': [r[0] for r in rows], 'failures': [r[1] for r in rows],
+        }
+    else:
+        conn.close()
+        return jsonify(error='Invalid parameters'), 400
+
     conn.close()
     return jsonify(result)
 
