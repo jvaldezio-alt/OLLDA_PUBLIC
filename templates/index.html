@@ -55,17 +55,25 @@
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-           background: var(--bg); color: var(--text); min-height: 100vh; }
+           background: var(--bg); color: var(--text);
+           min-height: 100vh; display: flex; flex-direction: column;
+           padding-bottom: 56px; }
 
-    header { background: #04080F; color: rgba(255,255,255,.85); padding: 14px 24px;
-             display: flex; justify-content: center;
+    header { background: #04080F; color: rgba(255,255,255,.85); padding: 10px 24px;
+             display: none; justify-content: center;
              border-bottom: 1px solid rgba(255,255,255,.07); }
-    .header-inner { display: flex; align-items: center; justify-content: space-between;
-                    width: 100%; max-width: 660px; }
+    header.visible { display: flex; }
+    .header-inner { display: flex; align-items: center; justify-content: center; gap: 14px;
+                    width: 100%; max-width: 860px; }
+    .header-logo { height: 44px; width: auto; display: block; mix-blend-mode: screen; }
+    .header-pill { background: rgba(255,255,255,.09); border: 1px solid rgba(255,255,255,.15);
+                   border-radius: 99px; padding: 5px 16px; font-size: .78rem;
+                   color: rgba(255,255,255,.75); font-weight: 500; letter-spacing: .02em;
+                   white-space: nowrap; }
     header h1 { font-size: 1.1rem; font-weight: 700; letter-spacing: .01em; }
 
     .section { display: none; }
-    .section.active { display: block; }
+    .section.active { display: block; flex: 1; }
 
     .btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 20px;
            border-radius: 6px; font-size: .88rem; font-weight: 500; cursor: pointer;
@@ -79,10 +87,10 @@
     .btn-success:hover { background: #166534; }
 
     /* ── Hero / Upload ─────────────────────────────────── */
-    .hero { min-height: calc(100vh - 54px - 64px);
+    .hero { min-height: calc(100vh - 64px);
             background: var(--hero-bg);
             display: flex; align-items: flex-start; justify-content: center;
-            position: relative; overflow: hidden; padding: 28px 24px 16px; }
+            position: relative; overflow: hidden; padding: 48px 24px 24px; }
     .hero::before { content: ''; position: absolute; inset: 0;
                     background-image: radial-gradient(rgba(96,165,250,.1) 1px, transparent 1px);
                     background-size: 32px 32px; pointer-events: none; }
@@ -93,7 +101,7 @@
                    background: radial-gradient(circle, rgba(37,99,235,.1) 0%, transparent 65%);
                    pointer-events: none; }
     .hero-inner  { position: relative; z-index: 1; text-align: center;
-                   max-width: 660px; width: 100%; }
+                   max-width: 768px; width: 100%; }
     .hero-db-icon { color: #3B82F6; margin-bottom: 12px;
                     filter: drop-shadow(0 0 18px rgba(59,130,246,.45)); }
     .hero-tag { display: inline-flex; align-items: center; gap: 7px;
@@ -102,11 +110,11 @@
                 font-size: .73rem; color: var(--hero-tag-color); letter-spacing: .08em;
                 text-transform: uppercase; font-weight: 600; }
     .hero-tag-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--hero-tag-color); flex-shrink: 0; }
-    .hero-title { font-size: 2.2rem; font-weight: 900; color: var(--hero-title-color); line-height: 1.1;
-                  margin-bottom: 12px; }
+    .hero-title { font-size: 2.8rem; font-weight: 900; color: var(--hero-title-color); line-height: 1.1;
+                  margin-bottom: 14px; }
     .hero-title em { font-style: normal; color: var(--primary); }
-    .hero-sub { color: var(--hero-sub-color); font-size: .92rem; line-height: 1.6;
-                margin-bottom: 18px; }
+    .hero-sub { color: var(--hero-sub-color); font-size: 1.05rem; line-height: 1.6;
+                margin-bottom: 22px; }
     .hero-sub code { background: var(--primary-light); border-radius: 4px;
                      padding: 1px 7px; color: var(--primary); font-size: .9em; }
     .upload-card { background: var(--upload-card-bg); backdrop-filter: blur(28px);
@@ -132,10 +140,11 @@
                      background: #4ADE80; flex-shrink: 0; }
 
     /* ── Footer ─────────────────────────────────────────── */
-    footer { background: #04080F; color: rgba(255,255,255,.42); height: 64px;
+    footer { background: #04080F; color: rgba(255,255,255,.42); height: 56px;
              padding: 0 36px; display: flex; align-items: center;
-             justify-content: space-between; flex-wrap: wrap; gap: 12px;
-             font-size: .78rem; border-top: 1px solid rgba(255,255,255,.06); flex-shrink: 0; }
+             justify-content: space-between; flex-wrap: nowrap; gap: 12px;
+             font-size: .78rem; border-top: 1px solid rgba(255,255,255,.06);
+             position: fixed; bottom: 0; left: 0; right: 0; z-index: 100; }
     footer strong { color: rgba(255,255,255,.75); }
     .foot-center { display: flex; align-items: center; gap: 7px; }
     .foot-right  { display: flex; align-items: center; gap: 12px; }
@@ -176,7 +185,10 @@
     /* Cards */
     .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
              gap: 14px; margin-bottom: 24px; }
-    .card { background: var(--surface); border-radius: var(--radius); padding: 18px 20px; box-shadow: var(--shadow); }
+    .card { background: var(--surface); border-radius: var(--radius); padding: 18px 20px; box-shadow: var(--shadow); transition: border-color .15s, box-shadow .15s; border: 1px solid transparent; }
+    .card[onclick] { border-color: rgba(37,99,235,.25); }
+    .card[onclick]:hover { border-color: rgba(37,99,235,.65); box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+    .card[onclick] .label::after { content: ' ↗'; font-size: .65rem; opacity: .5; }
     .card .label { font-size: .72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
     .card .value { font-size: 1.55rem; font-weight: 700; }
     .card .value.success { color: var(--success); }
@@ -337,18 +349,10 @@
 </head>
 <body>
 
-<header>
+<header id="main-header">
   <div class="header-inner">
-    <h1><span style="margin-right:8px;">⛏️</span>OLLDA &ndash; Oracle Listener Log Discovery and Analyzer</h1>
-    <button id="theme-btn" onclick="toggleTheme()" title="Toggle dark/light mode"
-      style="background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);
-             border-radius:99px;padding:5px 12px;cursor:pointer;
-             display:flex;align-items:center;gap:6px;flex-shrink:0;
-             color:rgba(255,255,255,.75);font-size:.78rem;font-weight:500;
-             transition:background .15s;">
-      <span id="theme-icon">🌙</span>
-      <span id="theme-label">Dark</span>
-    </button>
+    <img src="static/OLLDA_logo_1.png" alt="OLLDA" class="header-logo">
+    <span class="header-pill">Oracle Listener Log Discovery and Analyzer</span>
   </div>
 </header>
 
@@ -359,28 +363,22 @@
     <div class="hero-glow-l"></div>
     <div class="hero-inner">
 
-      <!-- DB Icon -->
-      <div class="hero-db-icon">
-        <svg width="52" height="52" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
-          <ellipse cx="12" cy="5" rx="9" ry="3"/>
-          <path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/>
-          <path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/>
-        </svg>
+      <!-- Hero: logo + title side by side, centered -->
+      <div style="display:flex;align-items:center;justify-content:center;gap:32px;margin-bottom:18px;">
+        <!-- Logo box -->
+        <div style="flex-shrink:0;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);border-radius:16px;padding:20px 24px;display:flex;align-items:center;justify-content:center;">
+          <img src="static/OLLDA_logo_1.png" alt="OLLDA" style="height:220px;width:auto;mix-blend-mode:screen;">
+        </div>
+        <div style="text-align:center;">
+          <!-- Title -->
+          <h2 class="hero-title">
+            Discover <em>Every Connection</em><br>to Your Oracle Database
+          </h2>
+          <span style="display:inline-block;font-size:.78rem;color:rgba(255,255,255,.7);letter-spacing:.05em;text-transform:uppercase;font-weight:600;background:rgba(255,255,255,.09);border:1px solid rgba(255,255,255,.18);border-radius:99px;padding:5px 16px;">Oracle Listener Log Discovery and Analyzer</span>
+        </div>
       </div>
-
-      <!-- Tag -->
-      <div class="hero-tag">
-        <span class="hero-tag-dot"></span>
-        Oracle Listener Log Intelligence
-      </div>
-
-      <!-- Title -->
-      <h2 class="hero-title">
-        Discover <em>Every Connection</em><br>to Your Oracle Database
-      </h2>
-
-      <!-- Subtitle -->
-      <p class="hero-sub">
+      <!-- Subtitle full width below -->
+      <p class="hero-sub" style="text-align:left;">
         Upload your <code>listener.log</code> and instantly map all inbound connections —
         by IP, program, host, user &amp; service — with interactive charts and exportable reports.
       </p>
@@ -397,8 +395,8 @@
         </div>
         <div class="up-title">Drop listener log files here</div>
         <div class="up-browse">or <span class="up-link">browse for files</span> &nbsp;·&nbsp; multiple files supported (RAC)</div>
-        <div class="up-hint">Supports .log, .txt, .gz, .tar.gz &nbsp;·&nbsp; Up to 500 MB (compressed) &nbsp;·&nbsp; SCAN + node listeners</div>
-        <input type="file" id="file-in" hidden accept=".log,.txt,.gz,.tar.gz,application/gzip,application/x-tar" multiple>
+        <div class="up-hint">Supports .log, .txt, .gz, .tar.gz, .tgz &nbsp;·&nbsp; Up to 500 MB (compressed) &nbsp;·&nbsp; SCAN + node listeners</div>
+        <input type="file" id="file-in" hidden accept=".log,.txt,.gz,.tar.gz,.tgz,application/gzip,application/x-tar" multiple>
       </div>
 
       <!-- Staged file list + start button -->
@@ -509,14 +507,14 @@
     <div class="sidebar">
       <div class="sidebar-label">Overview</div>
       <div class="cards">
-        <div class="card"><div class="label">Total Connections</div><div class="value" id="st-total">—</div></div>
+        <div class="card" onclick="openStatModal('total')" style="cursor:pointer;"><div class="label">Total Connections</div><div class="value" id="st-total">—</div></div>
         <div class="card"><div class="label">Successful</div><div class="value success" id="st-success">—</div></div>
         <div class="card"><div class="label">Failures</div><div class="value danger" id="st-fail">—</div></div>
         <div class="card"><div class="label">Unique IPs</div><div class="value" id="st-ips">—</div></div>
-        <div class="card"><div class="label">Programs</div><div class="value" id="st-prog">—</div></div>
-        <div class="card"><div class="label">Services</div><div class="value" id="st-svc">—</div></div>
+        <div class="card" onclick="openStatModal('programs')" style="cursor:pointer;"><div class="label">Programs</div><div class="value" id="st-prog">—</div></div>
+        <div class="card" onclick="openStatModal('services')" style="cursor:pointer;"><div class="label">Services</div><div class="value" id="st-svc">—</div></div>
         <div class="card"><div class="label">Client Hosts</div><div class="value" id="st-host">—</div></div>
-        <div class="card"><div class="label">OS Users</div><div class="value" id="st-user">—</div></div>
+        <div class="card" onclick="openStatModal('users')" style="cursor:pointer;"><div class="label">OS Users</div><div class="value" id="st-user">—</div></div>
       </div>
     </div>
 
@@ -652,13 +650,23 @@
     <div id="view-iptree" style="display:none;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
         <div style="font-weight:600;font-size:.95rem;color:var(--text);">IP Tree</div>
-        <button id="btn-tree-fail-only" onclick="toggleTreeFailOnly()"
-          style="display:flex;align-items:center;gap:6px;padding:5px 14px;border-radius:99px;
-                 font-size:.8rem;font-weight:600;border:1.5px solid var(--danger);
-                 background:transparent;color:var(--danger);cursor:pointer;transition:all .15s;">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-          Failures only
-        </button>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <button id="btn-expand-level" onclick="expandNextLevel()"
+            style="padding:5px 14px;border-radius:99px;font-size:.8rem;font-weight:600;
+                   border:1.5px solid var(--border);background:transparent;color:var(--text);
+                   cursor:pointer;transition:all .15s;">▼ Expand Level 1</button>
+          <button onclick="collapseAll()"
+            style="padding:5px 14px;border-radius:99px;font-size:.8rem;font-weight:600;
+                   border:1.5px solid var(--border);background:transparent;color:var(--text);
+                   cursor:pointer;transition:all .15s;">▶ Collapse All</button>
+          <button id="btn-tree-fail-only" onclick="toggleTreeFailOnly()"
+            style="display:flex;align-items:center;gap:6px;padding:5px 14px;border-radius:99px;
+                   font-size:.8rem;font-weight:600;border:1.5px solid var(--danger);
+                   background:transparent;color:var(--danger);cursor:pointer;transition:all .15s;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+            Failures only
+          </button>
+        </div>
       </div>
       <div id="iptree-area">
         <div class="table-loading">Select "By IP" grouping to use the IP Tree view.</div>
@@ -889,6 +897,7 @@
   let sortColIdx = 0, sortAsc = false, filterText = '';
   let currentView = 'table', failuresOnly = false;
   let treeExpanded = new Set(), treeFailOnly = false;
+  let _expandLevel = 0;
   let chartBar = null, chartDonut = null, chartPie = null;
   // Failures drill-down state
   let drillActive = false, drillLevel = 'date', drillDate = null, drillHour = -1;
@@ -905,6 +914,9 @@
   function show(id) {
     document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
     document.getElementById(id).classList.add('active');
+    const hdr = document.getElementById('main-header');
+    if (id === 'sec-upload') hdr.classList.remove('visible');
+    else hdr.classList.add('visible');
   }
 
   // ── Upload ────────────────────────────────────────────────────────────────
@@ -1035,7 +1047,7 @@
   let _warnSid = null, _warnFiles = null;
 
   function _listenProgress(sid) {
-    session = sid;
+    session = sid; window._session = sid;
     const es = new EventSource(`/progress/${sid}`);
     es.onmessage = e => {
       const d = JSON.parse(e.data);
@@ -1248,6 +1260,8 @@
     }
 
     const tree  = buildIpTree(source, ipIdx, connIdx, succIdx, failIdx);
+    window._iptreeNodes = tree;
+    setTimeout(_updateExpandBtn, 0);
     const roots = Object.values(tree)
       .filter(n => n.level === 0)
       .sort((a, b) => b.connections - a.connections);
@@ -1338,6 +1352,40 @@
     }
     roots.forEach(walk);
     return frontier;
+  }
+
+  function _maxExpandLevel() {
+    if (!window._iptreeNodes) return 0;
+    const levels = Object.values(window._iptreeNodes).filter(n => !n.leaf).map(n => n.level);
+    return levels.length ? Math.max(...levels) : 0;
+  }
+
+  function _updateExpandBtn() {
+    const btn = document.getElementById('btn-expand-level');
+    if (!btn) return;
+    const max = _maxExpandLevel();
+    btn.textContent = `▼ Expand Level ${_expandLevel + 1}`;
+    btn.disabled    = _expandLevel >= max;
+    btn.style.opacity = _expandLevel >= max ? '.35' : '1';
+    btn.style.cursor  = _expandLevel >= max ? 'default' : 'pointer';
+  }
+
+  function expandNextLevel() {
+    if (!window._iptreeNodes) return;
+    if (_expandLevel >= _maxExpandLevel()) return;
+    _expandLevel++;
+    Object.values(window._iptreeNodes).forEach(n => {
+      if (!n.leaf && n.level < _expandLevel) treeExpanded.add(n.key);
+    });
+    renderIpTree();
+    _updateExpandBtn();
+  }
+
+  function collapseAll() {
+    _expandLevel = 0;
+    treeExpanded.clear();
+    renderIpTree();
+    _updateExpandBtn();
   }
 
   function toggleTreeFailOnly() {
@@ -2251,7 +2299,7 @@
     if (mapSec) mapSec.style.display = 'none';
 
     // Load initial data
-    session = '__report__';
+    session = '__report__'; window._session = '__report__';
     currentGroupBy = ['client_ip'];
     loadTable();
   }
@@ -2264,6 +2312,7 @@
     session = null; allHeaders = []; allRows = [];
     pendingFiles = [];
     treeExpanded = new Set();
+    _expandLevel = 0;
     treeFailOnly = false;
     failuresOnly = false;
     _exitDrill();
@@ -2293,20 +2342,28 @@
     <a onclick="document.getElementById('legal-modal').style.display='flex';return false;"
        href="#" style="color:rgba(255,255,255,.38);text-decoration:none;transition:color .15s;"
        onmouseover="this.style.color='rgba(255,255,255,.7)'" onmouseout="this.style.color='rgba(255,255,255,.38)'">
-      Legal Disclaimer
+      👉 Legal Disclaimer
     </a>
   </span>
 
   <div class="foot-center">
-    <!-- Lightning bolt -->
     <svg width="14" height="14" viewBox="0 0 24 24" fill="#FBBF24" stroke="none">
       <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
     </svg>
-    <span>Powered by <strong>Claude Code</strong></span>
+    <span>Powered by <strong>O2bro IT Business</strong></span>
   </div>
 
   <div class="foot-right">
-    <span>Author: <strong>José Valdézio</strong> &nbsp;
+    <button id="theme-btn" onclick="toggleTheme()" title="Toggle dark/light mode"
+      style="background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.14);
+             border-radius:99px;padding:5px 12px;cursor:pointer;
+             display:flex;align-items:center;gap:6px;flex-shrink:0;
+             color:rgba(255,255,255,.75);font-size:.78rem;font-weight:500;
+             transition:background .15s;">
+      <span id="theme-icon">🌙</span>
+      <span id="theme-label">Dark</span>
+    </button>
+    <span>Developed by &nbsp;
       <a href="https://linktr.ee/jvaldeziodba" target="_blank" rel="noopener"
          style="color:rgba(255,255,255,.55);font-size:.75rem;text-decoration:none;
                 border:1px solid rgba(255,255,255,.18);border-radius:99px;
@@ -2318,6 +2375,160 @@
     </span>
   </div>
 </footer>
+
+<!-- Stat modal overlay -->
+<div id="stat-modal" onclick="if(event.target===this)closeStatModal()"
+  style="display:none;position:fixed;inset:0;z-index:2000;
+         background:rgba(0,0,0,.75);backdrop-filter:blur(6px);
+         align-items:center;justify-content:center;">
+  <div style="background:#0d1117;border:1px solid rgba(255,255,255,.14);border-radius:16px;
+              box-shadow:0 24px 64px rgba(0,0,0,.7);
+              padding:24px 28px;min-width:360px;max-width:860px;width:94%;max-height:88vh;
+              overflow-y:auto;position:relative;">
+    <button onclick="closeStatModal()"
+      style="position:absolute;top:14px;right:16px;background:rgba(255,255,255,.08);
+             border:1px solid rgba(255,255,255,.12);border-radius:99px;width:28px;height:28px;
+             font-size:1rem;cursor:pointer;color:rgba(255,255,255,.7);display:flex;
+             align-items:center;justify-content:center;line-height:1;">✕</button>
+    <div id="stat-modal-title"
+      style="font-weight:700;font-size:1rem;margin-bottom:20px;
+             text-transform:uppercase;letter-spacing:.06em;font-size:.8rem;
+             color:rgba(255,255,255,.55);"></div>
+    <div id="stat-modal-body"></div>
+  </div>
+</div>
+
+<script>
+  let _statChart1 = null, _statChart2 = null;
+
+  async function openStatModal(type) {
+    const session = window._session;
+    if (!session) return;
+    const modal = document.getElementById('stat-modal');
+    const title = document.getElementById('stat-modal-title');
+    const body  = document.getElementById('stat-modal-body');
+    const dimMap   = { programs:'program', services:'service_name', users:'os_user', total:'client_ip' };
+    const labelMap = { programs:'Programs', services:'Services', users:'OS Users', total:'Total Connections' };
+    title.textContent = labelMap[type] || type;
+    body.innerHTML = '<div style="color:rgba(255,255,255,.4);font-size:.9rem;padding:24px 0;">Loading…</div>';
+    modal.style.display = 'flex';
+
+    // destroy any previous charts
+    if (_statChart1) { _statChart1.destroy(); _statChart1 = null; }
+    if (_statChart2) { _statChart2.destroy(); _statChart2 = null; }
+
+    try {
+      const dim = dimMap[type] || type;
+      const res = await fetch(`/query/${session}?g=${dim}&limit=500`);
+      const data = await res.json();
+      if (!data.rows || !data.rows.length) {
+        body.innerHTML = '<div style="color:rgba(255,255,255,.4);">No data.</div>'; return;
+      }
+      const hdrs     = data.headers || data.cols;
+      const connIdx  = hdrs.indexOf('Connections');
+      const succIdx  = hdrs.indexOf('Success');
+      const failIdx  = hdrs.indexOf('Failures');
+      const rows     = data.rows;
+
+      if (type === 'total') {
+        // Two side-by-side charts like the Charts view
+        body.innerHTML = `
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
+            <div style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);
+                        border-radius:12px;padding:16px;">
+              <div style="font-size:.75rem;font-weight:600;color:rgba(255,255,255,.45);
+                          text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px;">
+                Distribution — Top 10
+              </div>
+              <div style="height:280px;position:relative;">
+                <canvas id="stat-chart-donut"></canvas>
+              </div>
+            </div>
+            <div style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);
+                        border-radius:12px;padding:16px;">
+              <div style="font-size:.75rem;font-weight:600;color:rgba(255,255,255,.45);
+                          text-transform:uppercase;letter-spacing:.06em;margin-bottom:12px;">
+                Success vs Failures
+              </div>
+              <div style="height:280px;position:relative;">
+                <canvas id="stat-chart-pie"></canvas>
+              </div>
+            </div>
+          </div>`;
+
+        const grandTotal = rows.reduce((s,r)=>s+(Number(r[connIdx])||0), 0);
+        const top10  = rows.slice(0,10);
+        const others = rows.slice(10).reduce((s,r)=>s+(Number(r[connIdx])||0), 0);
+        const dL = top10.map(r => r[0]);
+        const dV = top10.map(r => Number(r[connIdx])||0);
+        if (others > 0) { dL.push('Others'); dV.push(others); }
+
+        _statChart1 = new Chart(document.getElementById('stat-chart-donut').getContext('2d'), {
+          type:'doughnut', data:{ labels:dL, datasets:[{ data:dV,
+            backgroundColor:PALETTE.slice(0,dV.length), borderWidth:2,
+            borderColor:'rgba(0,0,0,.3)' }]},
+          options:{ responsive:true, maintainAspectRatio:false,
+            plugins:{ legend:{ position:'bottom', labels:{ color:'rgba(255,255,255,.65)',
+              font:{ size:11 }, boxWidth:12, padding:10 } },
+              tooltip:{ callbacks:{ label: ctx => {
+                const pct = grandTotal > 0 ? ((ctx.raw/grandTotal)*100).toFixed(1) : 0;
+                return ` ${ctx.raw.toLocaleString()} (${pct}%)`;
+              }}}}}});
+
+        const ts = rows.reduce((s,r)=>s+(Number(r[succIdx])||0), 0);
+        const tf = rows.reduce((s,r)=>s+(Number(r[failIdx])||0), 0);
+        _statChart2 = new Chart(document.getElementById('stat-chart-pie').getContext('2d'), {
+          type:'doughnut', data:{ labels:['Success','Failures'],
+            datasets:[{ data:[ts,tf],
+              backgroundColor:['rgba(22,163,74,.85)','rgba(220,38,38,.85)'],
+              borderWidth:2, borderColor:'rgba(0,0,0,.3)' }]},
+          options:{ responsive:true, maintainAspectRatio:false,
+            plugins:{ legend:{ position:'bottom', labels:{ color:'rgba(255,255,255,.65)',
+              font:{ size:12 }, boxWidth:14 } },
+              tooltip:{ callbacks:{ label: ctx => {
+                const tot = ts+tf, pct = tot ? ((ctx.raw/tot)*100).toFixed(2) : 0;
+                return ` ${ctx.raw.toLocaleString()} (${pct}%)`;
+              }}}}}});
+
+      } else {
+        // Table view for programs, services, users
+        const grandTotal = rows.reduce((s,r)=>s+(Number(r[connIdx])||0), 0);
+        let html = `<table style="width:100%;border-collapse:collapse;font-size:.85rem;">
+          <thead><tr>
+            <th style="text-align:left;padding:7px 10px;border-bottom:1px solid rgba(255,255,255,.1);
+                       color:rgba(255,255,255,.4);font-weight:600;">${hdrs[0]}</th>
+            <th style="text-align:right;padding:7px 10px;border-bottom:1px solid rgba(255,255,255,.1);
+                       color:rgba(255,255,255,.4);font-weight:600;">Connections</th>
+            <th style="text-align:right;padding:7px 10px;border-bottom:1px solid rgba(255,255,255,.1);
+                       color:rgba(255,255,255,.4);font-weight:600;">%</th>
+          </tr></thead><tbody>`;
+        rows.forEach((r,i) => {
+          const val = Number(r[connIdx])||0;
+          const pct = grandTotal ? ((val/grandTotal)*100).toFixed(1) : '0.0';
+          const bg = i%2===0 ? 'transparent' : 'rgba(255,255,255,.03)';
+          html += `<tr style="background:${bg};">
+            <td style="padding:7px 10px;color:rgba(255,255,255,.85);">${r[0]||'—'}</td>
+            <td style="text-align:right;padding:7px 10px;font-variant-numeric:tabular-nums;
+                       color:rgba(255,255,255,.85);">${val.toLocaleString()}</td>
+            <td style="text-align:right;padding:7px 10px;color:rgba(255,255,255,.45);">${pct}%</td>
+          </tr>`;
+        });
+        html += '</tbody></table>';
+        body.innerHTML = html;
+      }
+    } catch(e) {
+      body.innerHTML = '<div style="color:rgba(220,38,38,.9);">Error loading data.</div>';
+      console.error(e);
+    }
+  }
+
+  function closeStatModal() {
+    if (_statChart1) { _statChart1.destroy(); _statChart1 = null; }
+    if (_statChart2) { _statChart2.destroy(); _statChart2 = null; }
+    document.getElementById('stat-modal').style.display = 'none';
+  }
+
+</script>
 
 </body>
 </html>
