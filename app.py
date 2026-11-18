@@ -13,6 +13,159 @@ app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500 MB (compressed uploa
 SESSIONS: dict = {}
 _LOCK = threading.Lock()
 
+# ── Session storage & cleanup ──────────────────────────────────────────────
+# Each analysis session is backed by a temporary SQLite file in the system temp
+# dir (ollda_*.db). Sessions idle for more than OLLDA_SESSION_TTL_HOURS are
+# removed together with their files by a per-process janitor thread. Because
+# Gunicorn runs several workers (each with its own SESSIONS dict), orphan files
+# are only removed based on their mtime, which is refreshed on every access.
+
+SESSION_TTL_SECONDS = max(float(os.environ.get('OLLDA_SESSION_TTL_HOURS', '2')), 0.01) * 3600
+CLEANUP_INTERVAL_SECONDS = max(float(os.environ.get('OLLDA_CLEANUP_INTERVAL_MIN', '15')), 0.1) * 60
+DB_PREFIX = 'ollda_'
+_SQLITE_MAGIC = b'SQLite format 3\x00'
+_JANITOR_PID = None
+_JANITOR_LOCK = threading.Lock()
+
+
+def _new_db_path():
+    fd, dp = tempfile.mkstemp(prefix=DB_PREFIX, suffix='.db')
+    os.close(fd)
+    return dp
+
+
+def _get_session(sid):
+    """Return SESSIONS[sid] and mark it as accessed. Caller must hold _LOCK."""
+    s = SESSIONS.get(sid)
+    if s is not None:
+        s['last_access'] = time.time()
+        try:
+            os.utime(s.get('db_path', ''))   # keep mtime fresh for other workers
+        except OSError:
+            pass
+    return s
+
+
+def _discard_session(s):
+    """Delete every file owned by a session dict (already removed from SESSIONS)."""
+    for src in s.get('log_sources', []):
+        if isinstance(src, str):
+            try: os.unlink(src)
+            except Exception: pass
+        elif isinstance(src, tuple) and len(src) >= 2:
+            try: os.unlink(src[1])
+            except Exception: pass
+    try: os.unlink(s.get('db_path', ''))
+    except Exception: pass
+
+
+def _is_ollda_db(path):
+    """True for files created by OLLDA (ollda_*.db) or legacy tmp*.db SQLite
+    files that contain the `connections` table (or are still empty)."""
+    name = os.path.basename(path)
+    if name.startswith(DB_PREFIX):
+        return True
+    try:
+        if os.path.getsize(path) == 0:
+            return True
+        with open(path, 'rb') as f:
+            if f.read(16) != _SQLITE_MAGIC:
+                return False
+        conn = sqlite3.connect(f'file:{path}?mode=ro', uri=True)
+        try:
+            return conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='connections'"
+            ).fetchone() is not None
+        finally:
+            conn.close()
+    except Exception:
+        return False
+
+
+def _expire_sessions(now=None):
+    """Remove this process's sessions idle for longer than the TTL."""
+    now = now or time.time()
+    expired = []
+    with _LOCK:
+        for sid, s in list(SESSIONS.items()):
+            if s.get('status') == 'parsing':
+                continue    # worker thread still writing to it
+            last = s.get('last_access') or s.get('created_at') or now
+            if now - last > SESSION_TTL_SECONDS:
+                expired.append(SESSIONS.pop(sid))
+    for s in expired:
+        _discard_session(s)
+    return len(expired)
+
+
+def _sweep_orphan_dbs(now=None):
+    """Remove OLLDA .db files in the temp dir that are not owned by this
+    process and whose mtime is older than the TTL (safe across workers)."""
+    now = now or time.time()
+    with _LOCK:
+        owned = {os.path.abspath(s.get('db_path', '')) for s in SESSIONS.values()}
+    tmpdir = tempfile.gettempdir()
+    removed = 0
+    try:
+        names = os.listdir(tmpdir)
+    except OSError:
+        return 0
+    for name in names:
+        if not name.endswith('.db') or not (name.startswith(DB_PREFIX) or name.startswith('tmp')):
+            continue
+        path = os.path.abspath(os.path.join(tmpdir, name))
+        if path in owned:
+            continue
+        try:
+            if now - os.path.getmtime(path) <= SESSION_TTL_SECONDS:
+                continue
+        except OSError:
+            continue
+        if not _is_ollda_db(path):
+            continue
+        try:
+            os.unlink(path)
+            removed += 1
+        except OSError:
+            pass
+    return removed
+
+
+def _janitor_loop():
+    while True:
+        time.sleep(CLEANUP_INTERVAL_SECONDS)
+        try:
+            n_s = _expire_sessions()
+            n_f = _sweep_orphan_dbs()
+            if n_s or n_f:
+                app.logger.info('OLLDA cleanup: %d expired session(s), %d orphan db file(s)', n_s, n_f)
+        except Exception:
+            app.logger.exception('OLLDA cleanup failed')
+
+
+def _ensure_janitor():
+    """Start the cleanup thread once per process (survives Gunicorn --preload forks)."""
+    global _JANITOR_PID
+    pid = os.getpid()
+    if _JANITOR_PID == pid:
+        return
+    with _JANITOR_LOCK:
+        if _JANITOR_PID == pid:
+            return
+        _JANITOR_PID = pid
+        try:
+            n = _sweep_orphan_dbs()
+            if n:
+                app.logger.info('OLLDA startup cleanup: removed %d orphan db file(s)', n)
+        except Exception:
+            pass
+        threading.Thread(target=_janitor_loop, name='ollda-janitor', daemon=True).start()
+
+
+@app.before_request
+def _janitor_hook():
+    _ensure_janitor()
+
 # ── Parsing ────────────────────────────────────────────────────────────────
 
 MONTH_MAP = {m: f'{i+1:02d}' for i, m in enumerate(
@@ -444,10 +597,13 @@ def _worker(sid, log_sources, db_path):
         conn.close()
         with _LOCK:
             SESSIONS[sid].update(status='ready', parsed=parsed,
-                                 lines_done=done, pct=100, summary=sm)
+                                 lines_done=done, pct=100, summary=sm,
+                                 last_access=time.time())
     except Exception as e:
         with _LOCK:
-            SESSIONS[sid].update(status='error', error=str(e))
+            if sid in SESSIONS:
+                SESSIONS[sid].update(status='error', error=str(e),
+                                     last_access=time.time())
     finally:
         # Safety cleanup for any sources not yet deleted
         for src in log_sources:
@@ -557,8 +713,8 @@ def upload():
         is_rac = len(all_bases) > 1
 
     sid = str(uuid.uuid4())
-    fd, dp = tempfile.mkstemp(suffix='.db')
-    os.close(fd)
+    dp = _new_db_path()
+    now = time.time()
 
     if warning_msg:
         with _LOCK:
@@ -568,13 +724,16 @@ def upload():
                 db_path=dp,
                 file_names=file_names,
                 warning_msg=warning_msg,
+                created_at=now,
+                last_access=now,
             )
         return jsonify(warning=True, warning_msg=warning_msg, session_id=sid, is_rac=is_rac)
 
     with _LOCK:
         SESSIONS[sid] = dict(status='parsing', parsed=0, lines_done=0,
                              total_lines=1, pct=0, db_path=dp,
-                             file_names=file_names)
+                             file_names=file_names,
+                             created_at=now, last_access=now)
 
     threading.Thread(target=_worker, args=(sid, all_sources, dp), daemon=True).start()
     return jsonify(session_id=sid, file_count=len(all_sources), is_rac=is_rac)
@@ -583,7 +742,7 @@ def upload():
 @app.route('/confirm/<sid>', methods=['POST'])
 def confirm(sid):
     with _LOCK:
-        s = SESSIONS.get(sid)
+        s = _get_session(sid)
         if not s or s.get('status') != 'pending_confirm':
             return jsonify(error='Invalid session'), 400
         log_sources = s.pop('log_sources')
@@ -603,15 +762,7 @@ def cancel_session(sid):
     with _LOCK:
         s = SESSIONS.pop(sid, None)
     if s:
-        for src in s.get('log_sources', []):
-            if isinstance(src, str):
-                try: os.unlink(src)
-                except Exception: pass
-            elif isinstance(src, tuple) and len(src) >= 2:
-                try: os.unlink(src[1])
-                except Exception: pass
-        try: os.unlink(s.get('db_path', ''))
-        except Exception: pass
+        _discard_session(s)
     return jsonify(ok=True)
 
 
@@ -620,7 +771,7 @@ def progress(sid):
     def gen():
         for _ in range(1200):   # up to 10 minutes
             with _LOCK:
-                s = {k: v for k, v in SESSIONS.get(sid, {}).items()
+                s = {k: v for k, v in (_get_session(sid) or {}).items()
                      if k not in ('db_path', 'log_sources')}
             if not s:
                 yield f"data: {json.dumps({'error': 'session not found'})}\n\n"
@@ -636,7 +787,7 @@ def progress(sid):
 @app.route('/query/<sid>')
 def query(sid):
     with _LOCK:
-        s = SESSIONS.get(sid)
+        s = _get_session(sid)
     if not s or s['status'] != 'ready':
         return jsonify(error='Session not ready'), 400
 
@@ -653,7 +804,7 @@ def query(sid):
 @app.route('/export/<sid>')
 def export(sid):
     with _LOCK:
-        s = SESSIONS.get(sid)
+        s = _get_session(sid)
     if not s or s['status'] != 'ready':
         return jsonify(error='Session not ready'), 400
 
@@ -697,7 +848,7 @@ def export(sid):
 @app.route('/ipmap/<sid>')
 def ipmap(sid):
     with _LOCK:
-        s = SESSIONS.get(sid)
+        s = _get_session(sid)
     if not s or s['status'] != 'ready':
         return jsonify(error='Not ready'), 400
 
@@ -733,7 +884,7 @@ def ipmap(sid):
 @app.route('/detail/<sid>')
 def detail(sid):
     with _LOCK:
-        s = SESSIONS.get(sid)
+        s = _get_session(sid)
     if not s or s['status'] != 'ready':
         return jsonify(error='Not ready'), 400
 
@@ -783,7 +934,7 @@ def detail(sid):
 @app.route('/failures_drilldown/<sid>')
 def failures_drilldown(sid):
     with _LOCK:
-        s = SESSIONS.get(sid)
+        s = _get_session(sid)
     if not s or s['status'] != 'ready':
         return jsonify(error='Not ready'), 400
 
@@ -839,7 +990,7 @@ def failures_drilldown(sid):
 @app.route('/export-html/<sid>')
 def export_html(sid):
     with _LOCK:
-        s = SESSIONS.get(sid)
+        s = _get_session(sid)
     if not s or s['status'] != 'ready':
         return jsonify(error='Session not ready'), 400
 
