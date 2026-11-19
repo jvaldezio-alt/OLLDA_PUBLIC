@@ -7,8 +7,17 @@ from flask import Flask, request, jsonify, render_template, Response, send_file,
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment
 
+# Semantic version shown in the footer (and in offline reports).
+# Bump on every change: MINOR for a new feature, PATCH for fixes/chores/perf.
+APP_VERSION = '1.10.0'
+
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500 MB (compressed upload limit)
+
+
+@app.context_processor
+def _inject_version():
+    return {'app_version': APP_VERSION}
 
 SESSIONS: dict = {}
 _LOCK = threading.Lock()
