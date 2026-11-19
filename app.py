@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Oracle Listener Log Analyzer — Web Application"""
 
-import os, re, uuid, json, time, tempfile, threading, sqlite3, gzip, tarfile, shutil
+import os, io, re, uuid, json, time, tempfile, threading, sqlite3, gzip, tarfile, shutil
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template, Response, send_file, make_response
 import openpyxl
@@ -15,23 +15,41 @@ _LOCK = threading.Lock()
 
 # ── Session storage & cleanup ──────────────────────────────────────────────
 # Each analysis session is backed by a temporary SQLite file in the system temp
-# dir (ollda_*.db). Sessions idle for more than OLLDA_SESSION_TTL_HOURS are
+# dir (ollda_*.db); uploads are staged as ollda_*.tmp / ollda_*.log until the
+# worker has parsed them. Sessions idle for more than OLLDA_SESSION_TTL_HOURS are
 # removed together with their files by a per-process janitor thread. Because
 # Gunicorn runs several workers (each with its own SESSIONS dict), orphan files
 # are only removed based on their mtime, which is refreshed on every access.
 
-SESSION_TTL_SECONDS = max(float(os.environ.get('OLLDA_SESSION_TTL_HOURS', '2')), 0.01) * 3600
+SESSION_TTL_SECONDS = max(float(os.environ.get('OLLDA_SESSION_TTL_HOURS', '6')), 0.01) * 3600
 CLEANUP_INTERVAL_SECONDS = max(float(os.environ.get('OLLDA_CLEANUP_INTERVAL_MIN', '15')), 0.1) * 60
-DB_PREFIX = 'ollda_'
+TMP_PREFIX = 'ollda_'
 _SQLITE_MAGIC = b'SQLite format 3\x00'
 _JANITOR_PID = None
 _JANITOR_LOCK = threading.Lock()
 
 
 def _new_db_path():
-    fd, dp = tempfile.mkstemp(prefix=DB_PREFIX, suffix='.db')
+    fd, dp = tempfile.mkstemp(prefix=TMP_PREFIX, suffix='.db')
     os.close(fd)
     return dp
+
+
+def _source_paths(log_sources):
+    for src in log_sources or []:
+        if isinstance(src, str):
+            yield src
+        elif isinstance(src, tuple) and len(src) >= 2:
+            yield src[1]
+
+
+def _touch(paths):
+    """Refresh mtime so the orphan sweep (in any worker) treats files as in use."""
+    for p in paths:
+        try:
+            os.utime(p)
+        except OSError:
+            pass
 
 
 def _get_session(sid):
@@ -39,31 +57,24 @@ def _get_session(sid):
     s = SESSIONS.get(sid)
     if s is not None:
         s['last_access'] = time.time()
-        try:
-            os.utime(s.get('db_path', ''))   # keep mtime fresh for other workers
-        except OSError:
-            pass
+        _touch([s.get('db_path', ''), *_source_paths(s.get('log_sources'))])
     return s
 
 
 def _discard_session(s):
     """Delete every file owned by a session dict (already removed from SESSIONS)."""
-    for src in s.get('log_sources', []):
-        if isinstance(src, str):
-            try: os.unlink(src)
-            except Exception: pass
-        elif isinstance(src, tuple) and len(src) >= 2:
-            try: os.unlink(src[1])
-            except Exception: pass
+    for p in _source_paths(s.get('log_sources')):
+        try: os.unlink(p)
+        except Exception: pass
     try: os.unlink(s.get('db_path', ''))
     except Exception: pass
 
 
 def _is_ollda_db(path):
-    """True for files created by OLLDA (ollda_*.db) or legacy tmp*.db SQLite
+    """True for files created by OLLDA (ollda_*) or legacy tmp*.db SQLite
     files that contain the `connections` table (or are still empty)."""
     name = os.path.basename(path)
-    if name.startswith(DB_PREFIX):
+    if name.startswith(TMP_PREFIX):
         return True
     try:
         if os.path.getsize(path) == 0:
@@ -98,12 +109,19 @@ def _expire_sessions(now=None):
     return len(expired)
 
 
+_SWEEP_SUFFIXES = ('.db', '.db-journal', '.tmp', '.log', '.xlsx')
+
+
 def _sweep_orphan_dbs(now=None):
-    """Remove OLLDA .db files in the temp dir that are not owned by this
-    process and whose mtime is older than the TTL (safe across workers)."""
+    """Remove OLLDA temp files (ollda_*.db/.tmp/.log/.xlsx, plus legacy tmp*.db
+    SQLite files) that are not owned by this process and whose mtime is older
+    than the TTL (safe across workers: in-use files get their mtime refreshed)."""
     now = now or time.time()
     with _LOCK:
-        owned = {os.path.abspath(s.get('db_path', '')) for s in SESSIONS.values()}
+        owned = set()
+        for s in SESSIONS.values():
+            owned.add(os.path.abspath(s.get('db_path', '')))
+            owned.update(os.path.abspath(p) for p in _source_paths(s.get('log_sources')))
     tmpdir = tempfile.gettempdir()
     removed = 0
     try:
@@ -111,7 +129,10 @@ def _sweep_orphan_dbs(now=None):
     except OSError:
         return 0
     for name in names:
-        if not name.endswith('.db') or not (name.startswith(DB_PREFIX) or name.startswith('tmp')):
+        if name.startswith(TMP_PREFIX):
+            if not name.endswith(_SWEEP_SUFFIXES):
+                continue
+        elif not (name.startswith('tmp') and name.endswith('.db')):
             continue
         path = os.path.abspath(os.path.join(tmpdir, name))
         if path in owned:
@@ -335,7 +356,7 @@ def _decompress_gz(src_path, src_name):
     Returns the temp path, or None if the content is not a listener log.
     Deletes src_path on exit regardless of outcome.
     """
-    fd, dst = tempfile.mkstemp(suffix='.log')
+    fd, dst = tempfile.mkstemp(prefix=TMP_PREFIX, suffix='.log')
     os.close(fd)
     try:
         with gzip.open(src_path, 'rb') as gz, open(dst, 'wb') as out:
@@ -369,7 +390,7 @@ def _resolve_upload(upload_file):
     name = upload_file.filename or 'upload'
     nl   = name.lower()
 
-    fd, src = tempfile.mkstemp(suffix='.tmp')
+    fd, src = tempfile.mkstemp(prefix=TMP_PREFIX, suffix='.tmp')
     os.close(fd)
     upload_file.save(src)
 
@@ -440,7 +461,7 @@ def _fingerprint_source(src, max_records=2000):
                     fobj = tar.extractfile(tarinfo)
                     if fobj is None:
                         continue
-                    fd, tp = tempfile.mkstemp(suffix='.log')
+                    fd, tp = tempfile.mkstemp(prefix=TMP_PREFIX, suffix='.log')
                     os.close(fd)
                     try:
                         with open(tp, 'wb') as out:
@@ -535,6 +556,7 @@ def _worker(sid, log_sources, db_path):
                             conn.commit()
                             batch.clear()
                         if done % 10000 == 0:
+                            _touch(_source_paths(log_sources))
                             with _LOCK:
                                 SESSIONS[sid].update(
                                     parsed=parsed, lines_done=done,
@@ -556,7 +578,7 @@ def _worker(sid, log_sources, db_path):
                             if fobj is None:
                                 continue
                             # Extract this member to a temp file, then process and delete
-                            fd, tp = tempfile.mkstemp(suffix='.log')
+                            fd, tp = tempfile.mkstemp(prefix=TMP_PREFIX, suffix='.log')
                             os.close(fd)
                             with open(tp, 'wb') as out:
                                 shutil.copyfileobj(fobj, out, 1024 * 1024)
@@ -574,6 +596,7 @@ def _worker(sid, log_sources, db_path):
                                             conn.commit()
                                             batch.clear()
                                         if done % 10000 == 0:
+                                            _touch([tp, *_source_paths(log_sources)])
                                             with _LOCK:
                                                 SESSIONS[sid].update(
                                                     parsed=parsed, lines_done=done,
@@ -833,13 +856,13 @@ def export(sid):
         ws.column_dimensions[col[0].column_letter].width = min(w + 2, 50)
     ws.freeze_panes = 'A2'
 
-    fd, tmp = tempfile.mkstemp(suffix='.xlsx')
-    os.close(fd)
-    wb.save(tmp)
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
 
     label = '_'.join(request.args.getlist('g')) or 'analysis'
     return send_file(
-        tmp, as_attachment=True,
+        buf, as_attachment=True,
         download_name=f'listener_{label}.xlsx',
         mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )
