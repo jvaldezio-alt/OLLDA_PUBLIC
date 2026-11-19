@@ -200,12 +200,45 @@ CREATE TABLE IF NOT EXISTS connections (
     program TEXT, client_host TEXT, os_user TEXT,
     client_ip TEXT, client_port TEXT, action TEXT, status_code TEXT, success INTEGER
 );
-CREATE INDEX IF NOT EXISTS i1 ON connections(client_ip);
-CREATE INDEX IF NOT EXISTS i2 ON connections(program);
-CREATE INDEX IF NOT EXISTS i3 ON connections(client_host);
-CREATE INDEX IF NOT EXISTS i4 ON connections(date);
-CREATE INDEX IF NOT EXISTS i5 ON connections(service_name);
 """
+
+# ── Pre-aggregated table ───────────────────────────────────────────────────
+# `connections` keeps every parsed line (raw, unindexed, kept for fidelity), but
+# all views read `agg`: one row per distinct combination of AGG_KEYS with the
+# number of connections (cnt) and the first/last timestamp. Every metric the UI
+# shows is decomposable over that key, so results are identical to querying the
+# raw table: COUNT(*) -> SUM(cnt), SUM(success) -> SUM(success*cnt),
+# MIN/MAX(timestamp) -> MIN(first_ts)/MAX(last_ts); COUNT(DISTINCT dim) and
+# WHERE/GROUP BY on any key column work unchanged. client_port is the only
+# column left out of the key (no view uses it).
+AGG_KEYS = ['date', 'hour', 'service_name', 'instance_name', 'server_type',
+            'program', 'client_host', 'os_user', 'client_ip', 'action',
+            'status_code', 'success']
+AGG_NT_KEYS = [k for k in AGG_KEYS if k not in ('date', 'hour')]
+AGG_FLUSH_KEYS = int(os.environ.get('OLLDA_AGG_FLUSH_KEYS', '200000'))
+
+_AGG_STAGE_DDL = ("CREATE TABLE IF NOT EXISTS agg_stage ("
+                  + ', '.join(AGG_KEYS) + ", cnt INTEGER, first_ts TEXT, last_ts TEXT)")
+_AGG_STAGE_INSERT = ("INSERT INTO agg_stage VALUES ("
+                     + ','.join('?' * (len(AGG_KEYS) + 3)) + ")")
+_AGG_BUILD = (
+    "CREATE TABLE agg AS SELECT " + ', '.join(AGG_KEYS)
+    + ", SUM(cnt) AS cnt, MIN(first_ts) AS first_ts, MAX(last_ts) AS last_ts"
+    + " FROM agg_stage GROUP BY " + ', '.join(AGG_KEYS) + ";"
+    + " DROP TABLE agg_stage;"
+    + " CREATE INDEX agg_ip ON agg(client_ip);"
+    + " CREATE INDEX agg_date ON agg(date, hour);"
+    # agg_nt: same key without date/hour -> much smaller; serves every view
+    # that does not group or filter by time
+    + " CREATE TABLE agg_nt AS SELECT " + ', '.join(AGG_NT_KEYS)
+    + ", SUM(cnt) AS cnt, MIN(first_ts) AS first_ts, MAX(last_ts) AS last_ts"
+    + " FROM agg GROUP BY " + ', '.join(AGG_NT_KEYS) + ";"
+    + " CREATE INDEX agg_nt_ip ON agg_nt(client_ip);"
+)
+TIME_KEYS = ('date', 'hour')
+
+C_CNT  = 'COALESCE(SUM(cnt),0)'
+C_SUCC = 'SUM(success*cnt)'
 
 _INSERT = (
     "INSERT INTO connections VALUES "
@@ -294,16 +327,16 @@ def _parse(line):
 def _summary(conn):
     q = lambda sql: (conn.execute(sql).fetchone() or [0])[0] or 0
     return dict(
-        total      = q("SELECT COUNT(*) FROM connections"),
-        success    = q("SELECT SUM(success) FROM connections"),
-        failures   = q("SELECT COUNT(*)-SUM(success) FROM connections"),
-        uniq_ips   = q("SELECT COUNT(DISTINCT client_ip)    FROM connections WHERE client_ip    IS NOT NULL"),
-        uniq_prog  = q("SELECT COUNT(DISTINCT program)      FROM connections WHERE program      IS NOT NULL"),
-        uniq_host  = q("SELECT COUNT(DISTINCT client_host)  FROM connections WHERE client_host  IS NOT NULL"),
-        uniq_user  = q("SELECT COUNT(DISTINCT os_user)      FROM connections WHERE os_user      IS NOT NULL"),
-        uniq_svc   = q("SELECT COUNT(DISTINCT service_name) FROM connections WHERE service_name IS NOT NULL"),
-        first      = conn.execute("SELECT MIN(timestamp) FROM connections").fetchone()[0],
-        last       = conn.execute("SELECT MAX(timestamp) FROM connections").fetchone()[0],
+        total      = q(f"SELECT {C_CNT} FROM agg_nt"),
+        success    = q(f"SELECT {C_SUCC} FROM agg_nt"),
+        failures   = q(f"SELECT {C_CNT}-{C_SUCC} FROM agg_nt"),
+        uniq_ips   = q("SELECT COUNT(DISTINCT client_ip)    FROM agg_nt WHERE client_ip    IS NOT NULL"),
+        uniq_prog  = q("SELECT COUNT(DISTINCT program)      FROM agg_nt WHERE program      IS NOT NULL"),
+        uniq_host  = q("SELECT COUNT(DISTINCT client_host)  FROM agg_nt WHERE client_host  IS NOT NULL"),
+        uniq_user  = q("SELECT COUNT(DISTINCT os_user)      FROM agg_nt WHERE os_user      IS NOT NULL"),
+        uniq_svc   = q("SELECT COUNT(DISTINCT service_name) FROM agg_nt WHERE service_name IS NOT NULL"),
+        first      = conn.execute("SELECT MIN(first_ts) FROM agg_nt").fetchone()[0],
+        last       = conn.execute("SELECT MAX(last_ts) FROM agg_nt").fetchone()[0],
     )
 
 
@@ -524,7 +557,32 @@ def _worker(sid, log_sources, db_path):
     """
     try:
         conn = sqlite3.connect(db_path)
+        # Throw-away session DB: durability is irrelevant, speed is not
+        conn.execute('PRAGMA journal_mode=OFF')
+        conn.execute('PRAGMA synchronous=OFF')
+        conn.execute('PRAGMA cache_size=-65536')   # 64 MB
         conn.executescript(DDL)
+        conn.execute(_AGG_STAGE_DDL)
+
+        acc = {}   # key tuple -> [cnt, first_ts, last_ts]
+
+        def accumulate(r):
+            k = tuple([r[c] for c in AGG_KEYS])
+            e = acc.get(k)
+            ts = r['timestamp']
+            if e is None:
+                acc[k] = [1, ts, ts]
+            else:
+                e[0] += 1
+                if ts < e[1]: e[1] = ts
+                if ts > e[2]: e[2] = ts
+
+        def flush_acc():
+            if acc:
+                conn.executemany(_AGG_STAGE_INSERT,
+                                 (k + tuple(v) for k, v in acc.items()))
+                conn.commit()
+                acc.clear()
 
         # Count total lines (plain files counted directly;
         # tar members estimated from uncompressed size ~150 bytes/line)
@@ -550,11 +608,14 @@ def _worker(sid, log_sources, db_path):
                         r = _parse(raw)
                         if r:
                             batch.append(r)
+                            accumulate(r)
                             parsed += 1
                         if len(batch) >= 5000:
                             conn.executemany(_INSERT, batch)
                             conn.commit()
                             batch.clear()
+                            if len(acc) >= AGG_FLUSH_KEYS:
+                                flush_acc()
                         if done % 10000 == 0:
                             _touch(_source_paths(log_sources))
                             with _LOCK:
@@ -590,11 +651,14 @@ def _worker(sid, log_sources, db_path):
                                         r = _parse(raw)
                                         if r:
                                             batch.append(r)
+                                            accumulate(r)
                                             parsed += 1
                                         if len(batch) >= 5000:
                                             conn.executemany(_INSERT, batch)
                                             conn.commit()
                                             batch.clear()
+                                            if len(acc) >= AGG_FLUSH_KEYS:
+                                                flush_acc()
                                         if done % 10000 == 0:
                                             _touch([tp, *_source_paths(log_sources)])
                                             with _LOCK:
@@ -615,6 +679,9 @@ def _worker(sid, log_sources, db_path):
         if batch:
             conn.executemany(_INSERT, batch)
             conn.commit()
+        flush_acc()
+        conn.executescript(_AGG_BUILD)
+        conn.commit()
 
         sm = _summary(conn)
         conn.close()
@@ -671,10 +738,10 @@ def _build_sql(group_by, limit=2000):
         hdr.append(dlabel[c])
 
     sel += [
-        "COUNT(*) AS connections",
-        "SUM(success) AS success",
-        "COUNT(*)-SUM(success) AS failures",
-        "ROUND(100.0*SUM(success)/COUNT(*), 1) AS pct",
+        f"{C_CNT} AS connections",
+        f"{C_SUCC} AS success",
+        f"{C_CNT}-{C_SUCC} AS failures",
+        f"ROUND(100.0*{C_SUCC}/{C_CNT}, 1) AS pct",
     ]
     hdr += ["Connections", "Success", "Failures", "% Success"]
 
@@ -683,12 +750,14 @@ def _build_sql(group_by, limit=2000):
             sel.append(f"COUNT(DISTINCT {c}) AS u_{c}")
             hdr.append(f"# {dlabel[c]}")
 
-    sel += ["MIN(timestamp)", "MAX(timestamp)"]
+    sel += ["MIN(first_ts)", "MAX(last_ts)"]
     hdr += ["First Seen", "Last Seen"]
 
     gc  = [f"COALESCE(CAST({c} AS TEXT), '(unknown)')" for c in valid]
-    sql = (f"SELECT {', '.join(sel)} FROM connections "
-           f"GROUP BY {', '.join(gc)} ORDER BY connections DESC LIMIT {limit}")
+    table = 'agg' if any(c in TIME_KEYS for c in valid) else 'agg_nt'
+    sql = (f"SELECT {', '.join(sel)} FROM {table} "
+           f"GROUP BY {', '.join(gc)} "
+           f"ORDER BY connections DESC, {', '.join(gc)} LIMIT {limit}")
     return sql, hdr
 
 
@@ -876,24 +945,25 @@ def ipmap(sid):
         return jsonify(error='Not ready'), 400
 
     conn = sqlite3.connect(s['db_path'])
-    total = conn.execute("SELECT COUNT(*) FROM connections").fetchone()[0] or 1
+    total = _total(conn)
 
-    rows = conn.execute("""
+    rows = conn.execute(f"""
         SELECT
-            c1.client_ip,
-            COUNT(*)                                                        AS connections,
-            COALESCE(SUM(c1.success), 0)                                   AS success,
-            COUNT(*) - COALESCE(SUM(c1.success), 0)                       AS failures,
-            (SELECT c2.client_host FROM connections c2
-             WHERE c2.client_ip = c1.client_ip AND c2.client_host IS NOT NULL
-             GROUP BY c2.client_host ORDER BY COUNT(*) DESC LIMIT 1)       AS primary_host,
-            COUNT(DISTINCT c1.program)                                     AS programs,
-            MIN(c1.timestamp)                                              AS first_seen,
-            MAX(c1.timestamp)                                              AS last_seen
-        FROM connections c1
-        WHERE c1.client_ip IS NOT NULL
-        GROUP BY c1.client_ip
-        ORDER BY connections DESC
+            a1.client_ip,
+            SUM(a1.cnt)                                                    AS connections,
+            COALESCE(SUM(a1.success*a1.cnt), 0)                            AS success,
+            SUM(a1.cnt) - COALESCE(SUM(a1.success*a1.cnt), 0)              AS failures,
+            (SELECT a2.client_host FROM agg_nt a2
+             WHERE a2.client_ip = a1.client_ip AND a2.client_host IS NOT NULL
+             GROUP BY a2.client_host ORDER BY SUM(a2.cnt) DESC, a2.client_host
+             LIMIT 1)                                                      AS primary_host,
+            COUNT(DISTINCT a1.program)                                     AS programs,
+            MIN(a1.first_ts)                                               AS first_seen,
+            MAX(a1.last_ts)                                                AS last_seen
+        FROM agg_nt a1
+        WHERE a1.client_ip IS NOT NULL
+        GROUP BY a1.client_ip
+        ORDER BY connections DESC, a1.client_ip
     """).fetchall()
     conn.close()
 
@@ -902,6 +972,50 @@ def ipmap(sid):
         'host': r[4], 'programs': r[5], 'first': r[6], 'last': r[7],
         'pct': round(100 * r[1] / total, 2),
     } for r in rows])
+
+
+def _total(conn):
+    return conn.execute(f"SELECT {C_CNT} FROM agg_nt").fetchone()[0] or 1
+
+
+def _ip_detail(conn, ip, total_all, with_failures=True):
+    """Per-IP breakdown used by /detail and by the offline HTML report."""
+    def q(sql):
+        return [list(r) for r in conn.execute(sql, (ip,)).fetchall()]
+
+    basic = conn.execute(f"""
+        SELECT {C_CNT}, COALESCE({C_SUCC},0),
+               {C_CNT}-COALESCE({C_SUCC},0),
+               COUNT(DISTINCT program), COUNT(DISTINCT client_host),
+               COUNT(DISTINCT os_user), COUNT(DISTINCT service_name),
+               MIN(first_ts), MAX(last_ts)
+        FROM agg_nt WHERE client_ip = ?
+    """, (ip,)).fetchone()
+    total = basic[0] or 0
+
+    d = dict(
+        ip=ip,
+        total=total, success=basic[1], failures=basic[2],
+        uniq_programs=basic[3], uniq_hosts=basic[4],
+        uniq_users=basic[5], uniq_services=basic[6],
+        first=basic[7], last=basic[8],
+        pct=round(100 * total / total_all, 2),
+        programs  = q(f"SELECT COALESCE(program,'(unknown)'),{C_CNT},COALESCE({C_SUCC},0) FROM agg_nt WHERE client_ip=? GROUP BY program ORDER BY {C_CNT} DESC, program"),
+        hosts     = q(f"SELECT COALESCE(client_host,'(no hostname)'),{C_CNT} FROM agg_nt WHERE client_ip=? GROUP BY client_host ORDER BY {C_CNT} DESC, client_host"),
+        users     = q(f"SELECT COALESCE(os_user,'(unknown)'),{C_CNT} FROM agg_nt WHERE client_ip=? GROUP BY os_user ORDER BY {C_CNT} DESC, os_user"),
+        services  = q(f"SELECT COALESCE(service_name,'(unknown)'),{C_CNT} FROM agg_nt WHERE client_ip=? GROUP BY service_name ORDER BY {C_CNT} DESC, service_name"),
+        by_hour   = q(f"SELECT hour,{C_CNT} FROM agg WHERE client_ip=? GROUP BY hour ORDER BY hour"),
+        by_date   = q(f"SELECT date,{C_CNT} FROM agg WHERE client_ip=? GROUP BY date ORDER BY date"),
+        fail_codes= q(f"SELECT status_code,{C_CNT} FROM agg_nt WHERE client_ip=? AND success=0 GROUP BY status_code ORDER BY {C_CNT} DESC, status_code"),
+        by_hour_by_date = q(f"SELECT date,hour,{C_CNT} FROM agg WHERE client_ip=? GROUP BY date,hour ORDER BY date,hour"),
+    )
+    if with_failures:
+        d.update(
+            by_hour_failures  = q(f"SELECT hour,{C_CNT} FROM agg WHERE client_ip=? AND success=0 GROUP BY hour ORDER BY hour"),
+            by_date_failures  = q(f"SELECT date,{C_CNT} FROM agg WHERE client_ip=? AND success=0 GROUP BY date ORDER BY date"),
+            by_hour_by_date_failures = q(f"SELECT date,hour,{C_CNT} FROM agg WHERE client_ip=? AND success=0 GROUP BY date,hour ORDER BY date,hour"),
+        )
+    return d
 
 
 @app.route('/detail/<sid>')
@@ -917,39 +1031,7 @@ def detail(sid):
 
     conn = sqlite3.connect(s['db_path'])
 
-    def q(sql, p=()):
-        return [list(r) for r in conn.execute(sql, p).fetchall()]
-
-    basic = conn.execute("""
-        SELECT COUNT(*), COALESCE(SUM(success),0),
-               COUNT(*)-COALESCE(SUM(success),0),
-               COUNT(DISTINCT program), COUNT(DISTINCT client_host),
-               COUNT(DISTINCT os_user), COUNT(DISTINCT service_name),
-               MIN(timestamp), MAX(timestamp)
-        FROM connections WHERE client_ip = ?
-    """, (ip,)).fetchone()
-
-    total_all = conn.execute("SELECT COUNT(*) FROM connections").fetchone()[0] or 1
-
-    result = dict(
-        ip=ip,
-        total=basic[0], success=basic[1], failures=basic[2],
-        uniq_programs=basic[3], uniq_hosts=basic[4],
-        uniq_users=basic[5], uniq_services=basic[6],
-        first=basic[7], last=basic[8],
-        pct=round(100 * basic[0] / total_all, 2),
-        programs  = q("SELECT COALESCE(program,'(unknown)'),COUNT(*),COALESCE(SUM(success),0) FROM connections WHERE client_ip=? GROUP BY program ORDER BY COUNT(*) DESC", (ip,)),
-        hosts     = q("SELECT COALESCE(client_host,'(no hostname)'),COUNT(*) FROM connections WHERE client_ip=? GROUP BY client_host ORDER BY COUNT(*) DESC", (ip,)),
-        users     = q("SELECT COALESCE(os_user,'(unknown)'),COUNT(*) FROM connections WHERE client_ip=? GROUP BY os_user ORDER BY COUNT(*) DESC", (ip,)),
-        services  = q("SELECT COALESCE(service_name,'(unknown)'),COUNT(*) FROM connections WHERE client_ip=? GROUP BY service_name ORDER BY COUNT(*) DESC", (ip,)),
-        by_hour   = q("SELECT hour,COUNT(*) FROM connections WHERE client_ip=? GROUP BY hour ORDER BY hour", (ip,)),
-        by_date   = q("SELECT date,COUNT(*) FROM connections WHERE client_ip=? GROUP BY date ORDER BY date", (ip,)),
-        fail_codes= q("SELECT status_code,COUNT(*) FROM connections WHERE client_ip=? AND success=0 GROUP BY status_code ORDER BY COUNT(*) DESC", (ip,)),
-        by_hour_by_date   = q("SELECT date,hour,COUNT(*) FROM connections WHERE client_ip=? GROUP BY date,hour ORDER BY date,hour", (ip,)),
-        by_hour_failures  = q("SELECT hour,COUNT(*) FROM connections WHERE client_ip=? AND success=0 GROUP BY hour ORDER BY hour", (ip,)),
-        by_date_failures  = q("SELECT date,COUNT(*) FROM connections WHERE client_ip=? AND success=0 GROUP BY date ORDER BY date", (ip,)),
-        by_hour_by_date_failures = q("SELECT date,hour,COUNT(*) FROM connections WHERE client_ip=? AND success=0 GROUP BY date,hour ORDER BY date,hour", (ip,)),
-    )
+    result = _ip_detail(conn, ip, _total(conn))
     conn.close()
     return jsonify(result)
 
@@ -972,15 +1054,15 @@ def failures_drilldown(sid):
 
     if level == 'date':
         rows = conn.execute(
-            "SELECT date, COUNT(*)-COALESCE(SUM(success),0) AS failures "
-            "FROM connections WHERE success=0 GROUP BY date ORDER BY date"
+            f"SELECT date, {C_CNT}-COALESCE({C_SUCC},0) AS failures "
+            "FROM agg WHERE success=0 GROUP BY date ORDER BY date"
         ).fetchall()
         result = {'level': 'date', 'labels': [r[0] for r in rows], 'failures': [r[1] for r in rows]}
 
     elif level == 'hour' and date:
         rows = conn.execute(
-            "SELECT hour, COUNT(*)-COALESCE(SUM(success),0) AS failures "
-            "FROM connections WHERE success=0 AND date=? GROUP BY hour ORDER BY hour",
+            f"SELECT hour, {C_CNT}-COALESCE({C_SUCC},0) AS failures "
+            "FROM agg WHERE success=0 AND date=? GROUP BY hour ORDER BY hour",
             (date,)
         ).fetchall()
         # fill all 24 hours so the axis is complete
@@ -993,9 +1075,9 @@ def failures_drilldown(sid):
 
     elif level == 'ip' and date and hour >= 0:
         rows = conn.execute(
-            "SELECT COALESCE(client_ip,'(unknown)'), COUNT(*)-COALESCE(SUM(success),0) AS failures "
-            "FROM connections WHERE success=0 AND date=? AND hour=? "
-            "GROUP BY client_ip ORDER BY failures DESC LIMIT 50",
+            f"SELECT COALESCE(client_ip,'(unknown)'), {C_CNT}-COALESCE({C_SUCC},0) AS failures "
+            "FROM agg WHERE success=0 AND date=? AND hour=? "
+            "GROUP BY client_ip ORDER BY failures DESC, client_ip LIMIT 50",
             (date, hour)
         ).fetchall()
         result = {
@@ -1046,40 +1128,12 @@ def export_html(sid):
     # IP details for top 500 IPs
     ip_sql, _ = _build_sql(['client_ip'], 500)
     top_ips = [r[0] for r in conn.execute(ip_sql).fetchall() if r[0] != '(unknown)']
-    total_all = conn.execute("SELECT COUNT(*) FROM connections").fetchone()[0] or 1
+    total_all = _total(conn)
 
-    ip_details = {}
-    for ip in top_ips:
-        basic = conn.execute("""
-            SELECT COUNT(*), COALESCE(SUM(success),0),
-                   COUNT(*)-COALESCE(SUM(success),0),
-                   COUNT(DISTINCT program), COUNT(DISTINCT client_host),
-                   COUNT(DISTINCT os_user), COUNT(DISTINCT service_name),
-                   MIN(timestamp), MAX(timestamp)
-            FROM connections WHERE client_ip = ?
-        """, (ip,)).fetchone()
-        ip_details[ip] = dict(
-            ip=ip,
-            total=basic[0], success=basic[1], failures=basic[2],
-            uniq_programs=basic[3], uniq_hosts=basic[4],
-            uniq_users=basic[5], uniq_services=basic[6],
-            first=basic[7], last=basic[8],
-            pct=round(100 * basic[0] / total_all, 2),
-            programs  = q("SELECT COALESCE(program,'(unknown)'),COUNT(*),COALESCE(SUM(success),0) FROM connections WHERE client_ip=? GROUP BY program ORDER BY COUNT(*) DESC", (ip,)),
-            hosts     = q("SELECT COALESCE(client_host,'(no hostname)'),COUNT(*) FROM connections WHERE client_ip=? GROUP BY client_host ORDER BY COUNT(*) DESC", (ip,)),
-            users     = q("SELECT COALESCE(os_user,'(unknown)'),COUNT(*) FROM connections WHERE client_ip=? GROUP BY os_user ORDER BY COUNT(*) DESC", (ip,)),
-            services  = q("SELECT COALESCE(service_name,'(unknown)'),COUNT(*) FROM connections WHERE client_ip=? GROUP BY service_name ORDER BY COUNT(*) DESC", (ip,)),
-            by_hour   = q("SELECT hour,COUNT(*) FROM connections WHERE client_ip=? GROUP BY hour ORDER BY hour", (ip,)),
-            by_date   = q("SELECT date,COUNT(*) FROM connections WHERE client_ip=? GROUP BY date ORDER BY date", (ip,)),
-            fail_codes= q("SELECT status_code,COUNT(*) FROM connections WHERE client_ip=? AND success=0 GROUP BY status_code ORDER BY COUNT(*) DESC", (ip,)),
-            by_hour_by_date = q("SELECT date,hour,COUNT(*) FROM connections WHERE client_ip=? GROUP BY date,hour ORDER BY date,hour", (ip,)),
-        )
+    ip_details = {ip: _ip_detail(conn, ip, total_all, with_failures=False)
+                  for ip in top_ips}
+    summary = s.get('summary') or _summary(conn)
     conn.close()
-
-    summary = {}
-    conn2 = sqlite3.connect(s['db_path'])
-    summary = _summary(conn2)
-    conn2.close()
 
     report_data = {
         'files'       : s.get('file_names', []),
