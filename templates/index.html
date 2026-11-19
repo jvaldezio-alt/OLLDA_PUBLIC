@@ -186,9 +186,17 @@
     .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(155px, 1fr));
              gap: 14px; margin-bottom: 24px; }
     .card { background: var(--surface); border-radius: var(--radius); padding: 18px 20px; box-shadow: var(--shadow); transition: border-color .15s, box-shadow .15s; border: 1px solid transparent; }
-    .card[onclick] { border-color: rgba(37,99,235,.25); }
-    .card[onclick]:hover { border-color: rgba(37,99,235,.65); box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
-    .card[onclick] .label::after { content: ' ↗'; font-size: .65rem; opacity: .5; }
+    .card[onclick] { position: relative; cursor: pointer; border-color: rgba(37,99,235,.35);
+                     transition: border-color .15s, box-shadow .15s, transform .15s; }
+    .card[onclick]::after { content: 'Details \203A'; position: absolute; top: 10px; right: 10px;
+                            font-size: .62rem; font-weight: 600; letter-spacing: .03em;
+                            color: var(--primary); background: rgba(37,99,235,.10);
+                            border: 1px solid rgba(37,99,235,.25); border-radius: 999px; padding: 2px 8px;
+                            transition: background .15s, color .15s; }
+    .card[onclick]:hover, .card[onclick]:focus-visible {
+      border-color: rgba(37,99,235,.75); box-shadow: 0 0 0 3px rgba(37,99,235,.15);
+      transform: translateY(-1px); outline: none; }
+    .card[onclick]:hover::after, .card[onclick]:focus-visible::after { background: var(--primary); color: #fff; }
     .card .label { font-size: .72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
     .card .value { font-size: 1.55rem; font-weight: 700; }
     .card .value.success { color: var(--success); }
@@ -507,14 +515,14 @@
     <div class="sidebar">
       <div class="sidebar-label">Overview</div>
       <div class="cards">
-        <div class="card" onclick="openStatModal('total')" style="cursor:pointer;"><div class="label">Total Connections</div><div class="value" id="st-total">—</div></div>
+        <div class="card" onclick="openStatModal('total')" role="button" tabindex="0" title="Click for details" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}"><div class="label">Total Connections</div><div class="value" id="st-total">—</div></div>
         <div class="card"><div class="label">Successful</div><div class="value success" id="st-success">—</div></div>
         <div class="card"><div class="label">Failures</div><div class="value danger" id="st-fail">—</div></div>
         <div class="card"><div class="label">Unique IPs</div><div class="value" id="st-ips">—</div></div>
-        <div class="card" onclick="openStatModal('programs')" style="cursor:pointer;"><div class="label">Programs</div><div class="value" id="st-prog">—</div></div>
-        <div class="card" onclick="openStatModal('services')" style="cursor:pointer;"><div class="label">Services</div><div class="value" id="st-svc">—</div></div>
+        <div class="card" onclick="openStatModal('programs')" role="button" tabindex="0" title="Click for details" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}"><div class="label">Programs</div><div class="value" id="st-prog">—</div></div>
+        <div class="card" onclick="openStatModal('services')" role="button" tabindex="0" title="Click for details" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}"><div class="label">Services</div><div class="value" id="st-svc">—</div></div>
         <div class="card"><div class="label">Client Hosts</div><div class="value" id="st-host">—</div></div>
-        <div class="card" onclick="openStatModal('users')" style="cursor:pointer;"><div class="label">OS Users</div><div class="value" id="st-user">—</div></div>
+        <div class="card" onclick="openStatModal('users')" role="button" tabindex="0" title="Click for details" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}"><div class="label">OS Users</div><div class="value" id="st-user">—</div></div>
       </div>
     </div>
 
@@ -890,6 +898,83 @@
 
   // ── Report mode (offline HTML export) ────────────────────────────────────
   const REPORT_MODE = typeof window.__REPORT__ !== 'undefined';
+
+  // Offline equivalent of GET /query (app.py _build_sql): uses a pre-computed
+  // grouping when present, otherwise aggregates the embedded agg/agg_nt rows.
+  // Returns null when the grouping cannot be computed offline.
+  function reportQuery(dims, limit) {
+    const R = window.__REPORT__;
+    const valid = dims.filter(d => R.dims ? R.dims.some(x => x[0] === d) : true);
+    if (!valid.length) valid.push('client_ip');
+    const key = valid.join(',');
+    if (R.queries[key] && R.queries[key].rows.length <= limit) return R.queries[key];
+    if (R.queries[key] && R.queries[key].rows.length > limit)
+      return { headers: R.queries[key].headers, rows: R.queries[key].rows.slice(0, limit) };
+
+    const timeDims = ['date', 'hour'];
+    const tbl = valid.some(d => timeDims.includes(d)) ? R.agg : R.agg_nt;
+    if (!tbl || !R.dims) return null;
+
+    const ci = {}; tbl.cols.forEach((c, i) => ci[c] = i);
+    const label = Object.fromEntries(R.dims);
+    const extra = (R.countable || []).filter(c => !valid.includes(c));
+    const txt = v => (v === null || v === undefined) ? '(unknown)' : String(v);
+
+    const groups = new Map();
+    for (const r of tbl.rows) {
+      const gv = valid.map(d => txt(r[ci[d]]));
+      const k = JSON.stringify(gv);
+      let g = groups.get(k);
+      if (!g) {
+        g = { gv, cnt: 0, succ: 0, first: null, last: null, sets: extra.map(() => new Set()) };
+        groups.set(k, g);
+      }
+      const n = r[ci.cnt];
+      g.cnt += n;
+      if (r[ci.success] === 1) g.succ += n;
+      const f = r[ci.first_ts], l = r[ci.last_ts];
+      if (f !== null && (g.first === null || f < g.first)) g.first = f;
+      if (l !== null && (g.last === null || l > g.last)) g.last = l;
+      extra.forEach((c, i) => { const v = r[ci[c]]; if (v !== null) g.sets[i].add(v); });
+    }
+
+    const cmp = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+    const out = [...groups.values()].sort((a, b) => {
+      if (b.cnt !== a.cnt) return b.cnt - a.cnt;
+      for (let i = 0; i < a.gv.length; i++) { const c = cmp(a.gv[i], b.gv[i]); if (c) return c; }
+      return 0;
+    }).slice(0, limit);
+
+    return {
+      headers: [...valid.map(d => label[d]), 'Connections', 'Success', 'Failures', '% Success',
+                ...extra.map(c => '# ' + label[c]), 'First Seen', 'Last Seen'],
+      rows: out.map(g => [...g.gv, g.cnt, g.succ, g.cnt - g.succ,
+                          Math.round(1000 * g.succ / g.cnt) / 10,
+                          ...g.sets.map(s => s.size), g.first, g.last]),
+    };
+  }
+
+  // Offline equivalent of GET /failures_drilldown
+  function reportDrill(level, date, hour) {
+    const rows = window.__REPORT__.fail_drill || [];   // [date, hour, ip, failures]
+    if (level === 'date') {
+      const m = new Map();
+      rows.forEach(([d, , , n]) => m.set(d, (m.get(d) || 0) + n));
+      const labels = [...m.keys()].sort();
+      return { level, labels, failures: labels.map(d => m.get(d)) };
+    }
+    if (level === 'hour') {
+      const hm = new Array(24).fill(0);
+      rows.forEach(([d, h, , n]) => { if (d === date) hm[h] += n; });
+      return { level, date, labels: hm.map((_, h) => String(h).padStart(2, '0') + 'h'), failures: hm };
+    }
+    const m = new Map();
+    rows.forEach(([d, h, ip, n]) => {
+      if (d === date && h === hour) { const k = ip === null ? '(unknown)' : ip; m.set(k, (m.get(k) || 0) + n); }
+    });
+    const top = [...m.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).slice(0, 50);
+    return { level, date, hour, labels: top.map(e => e[0]), failures: top.map(e => e[1]) };
+  }
 
   // ── State ─────────────────────────────────────────────────────────────────
   let session = null, currentGroupBy = ['client_ip'];
@@ -1480,8 +1565,14 @@
 
     let data;
     if (REPORT_MODE) {
-      const key = currentGroupBy[0];
-      data = window.__REPORT__.queries[key] || window.__REPORT__.queries['client_ip'];
+      data = reportQuery(currentGroupBy, 5000);
+      if (!data) {
+        allHeaders = []; allRows = [];
+        document.getElementById('table-area').innerHTML =
+          '<div class="table-loading">This combination is not available in the offline report ' +
+          '(dataset too large to embed). Use the Quick Views or a single dimension.</div>';
+        return;
+      }
     } else {
       const params = currentGroupBy.map(g => `g=${g}`).join('&');
       const res = await fetch(`/query/${session}?${params}&limit=5000`);
@@ -1628,9 +1719,14 @@
     if (drillDate) params.set('date', drillDate);
     if (drillHour >= 0) params.set('hour', drillHour);
 
-    const res = await fetch(`failures_drilldown/${session}?${params}`);
-    if (!res.ok) return;
-    const data = await res.json();
+    let data;
+    if (REPORT_MODE) {
+      data = reportDrill(level, drillDate, drillHour);
+    } else {
+      const res = await fetch(`failures_drilldown/${session}?${params}`);
+      if (!res.ok) return;
+      data = await res.json();
+    }
     _renderDrillChart(data);
   }
 
@@ -2204,8 +2300,9 @@
 
   function _updateThemeBtn() {
     const dark = _isDark();
-    document.getElementById('theme-icon').textContent  = dark ? '☀️' : '🌙';
-    document.getElementById('theme-label').textContent = dark ? 'Light' : 'Dark';
+    const icon = document.getElementById('theme-icon'), lbl = document.getElementById('theme-label');
+    if (icon) icon.textContent = dark ? '☀️' : '🌙';
+    if (lbl)  lbl.textContent  = dark ? 'Light' : 'Dark';
   }
 
   function toggleTheme() {
@@ -2419,8 +2516,9 @@
 
     try {
       const dim = dimMap[type] || type;
-      const res = await fetch(`/query/${session}?g=${dim}&limit=500`);
-      const data = await res.json();
+      const data = REPORT_MODE
+        ? (reportQuery([dim], 500) || { headers: [], rows: [] })
+        : await (await fetch(`/query/${session}?g=${dim}&limit=500`)).json();
       if (!data.rows || !data.rows.length) {
         body.innerHTML = '<div style="color:rgba(255,255,255,.4);">No data.</div>'; return;
       }

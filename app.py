@@ -237,6 +237,8 @@ _AGG_BUILD = (
 )
 TIME_KEYS = ('date', 'hour')
 
+REPORT_MAX_AGG_ROWS = int(os.environ.get('OLLDA_REPORT_MAX_AGG_ROWS', '150000'))
+
 C_CNT  = 'COALESCE(SUM(cnt),0)'
 C_SUCC = 'SUM(success*cnt)'
 
@@ -1111,9 +1113,9 @@ def export_html(sid):
         rows = conn.execute(sql).fetchall()
         queries[dim] = {'headers': hdr, 'rows': [list(r) for r in rows]}
 
-    # Multi-dim groupings used in UI
-    for dims in [['client_ip'], ['program'], ['os_user'], ['service_name'],
-                 ['instance_name'], ['date'], ['hour'], ['status_code']]:
+    # Multi-dim groupings used by the Quick Views buttons
+    for dims in [['client_ip', 'program'], ['client_ip', 'program', 'client_host'],
+                 ['date', 'hour']]:
         key = ','.join(dims)
         if key not in queries:
             sql, hdr = _build_sql(dims, 5000)
@@ -1125,13 +1127,33 @@ def export_html(sid):
     sc_rows = conn.execute(sc_sql).fetchall()
     queries['status_code'] = {'headers': sc_hdr, 'rows': [list(r) for r in sc_rows]}
 
-    # IP details for top 500 IPs
+    # Aggregate tables, so the offline report can compute any Custom Group By
+    # combination in the browser (skipped when too large for an HTML file;
+    # the report then only offers the pre-computed groupings above).
+    def table_dump(name, keys):
+        n = conn.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0]
+        if n > REPORT_MAX_AGG_ROWS:
+            return None
+        cols = keys + ['cnt', 'first_ts', 'last_ts']
+        return {'cols': cols,
+                'rows': q(f"SELECT {', '.join(cols)} FROM {name}")}
+
+    agg_nt_dump = table_dump('agg_nt', AGG_NT_KEYS)
+    agg_dump = table_dump('agg', AGG_KEYS)
+
+    # Failures drill-down (date -> hour -> IP), same data as /failures_drilldown
+    fail_drill = q(f"SELECT date, hour, client_ip, {C_CNT} FROM agg WHERE success=0 "
+                   "GROUP BY date, hour, client_ip")
+
+    # IP details (incl. failure series): top 500 IPs + every IP with failures
     ip_sql, _ = _build_sql(['client_ip'], 500)
     top_ips = [r[0] for r in conn.execute(ip_sql).fetchall() if r[0] != '(unknown)']
+    fail_ips = [r[0] for r in conn.execute(
+        "SELECT DISTINCT client_ip FROM agg_nt WHERE success=0 AND client_ip IS NOT NULL")]
     total_all = _total(conn)
 
-    ip_details = {ip: _ip_detail(conn, ip, total_all, with_failures=False)
-                  for ip in top_ips}
+    ip_details = {ip: _ip_detail(conn, ip, total_all)
+                  for ip in dict.fromkeys(top_ips + fail_ips)}
     summary = s.get('summary') or _summary(conn)
     conn.close()
 
@@ -1141,11 +1163,18 @@ def export_html(sid):
         'summary'     : summary,
         'queries'     : queries,
         'ip_details'  : ip_details,
+        'dims'        : DIMS,
+        'countable'   : COUNTABLE,
+        'agg_nt'      : agg_nt_dump,
+        'agg'         : agg_dump,
+        'fail_drill'  : fail_drill,
     }
 
-    data_script = f'<script>window.__REPORT__ = {json.dumps(report_data, default=str)};</script>'
+    data_script = ('<script>window.__REPORT__ = '
+                   + json.dumps(report_data, default=str).replace('</', '<\\/')
+                   + ';</script>')
 
-    html = render_template('index.html')
+    html = render_template('index.html', dims=DIMS)
 
     # Inline Chart.js so the report works 100% offline (no CDN dependency)
     chartjs_path = os.path.join(app.static_folder, 'chart.umd.min.js')
